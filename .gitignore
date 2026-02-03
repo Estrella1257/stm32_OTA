@@ -1,3 +1,5 @@
 .vscode
 firmware/
 mdk/
+Bootloader/build/*
+!Bootloader/build/bootloader.bin
