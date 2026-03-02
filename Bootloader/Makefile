@@ -33,7 +33,8 @@ INC_DIRS := \
 # 包含 .c 源文件的路径
 SRC_DIRS := \
     src \
-    platform/cmsis/device
+    platform/cmsis/device \
+	platform/driver
 
 STARTUP_DIR := startup
 LINKER_DIR  := linker
@@ -68,7 +69,7 @@ CFLAGS  += $(addprefix -I,$(INC_DIRS))
 # Linker Flags
 # ===============================
 LDSCRIPT := $(LINKER_DIR)/STM32F417IGHx_FLASH.ld
-LDFLAGS  := $(CPU) -T$(LDSCRIPT) -nostartfiles -Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/$(TARGET).map
+LDFLAGS  := $(CPU) -specs=nano.specs -specs=nosys.specs -T$(LDSCRIPT) -nostartfiles -Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/$(TARGET).map
 
 # ===============================
 # Build Rules

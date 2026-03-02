@@ -18,5 +18,8 @@ void boot_jump_to_app(uint32_t app_addr)
 
     __set_MSP(app_sp);    // 设置主栈指针
 
+    while (!(USART1->SR & USART_SR_TC)) {}
+    for (volatile int i = 0; i < 50000; i++) __NOP();
+
     app_entry();          // 跳转，不再返回
 }

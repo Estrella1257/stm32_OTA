@@ -38,8 +38,9 @@ void usart_init(void)
     // GPIO_PinAFConfig(GPIOA, GPIO_PinSource9, GPIO_AF_USART1);
     // GPIO_PinAFConfig(GPIOA, GPIO_PinSource10, GPIO_AF_USART1);
 
-    USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);
     USART_Cmd(USART1, ENABLE);
+    USART_ReceiveData(USART1);
+    USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);
 }
 
 void usart_send_data(const char str[])
@@ -76,5 +77,5 @@ void USART1_IRQHandler(void)
         if (receive_callback) {
             receive_callback(data);
         }
-    }
+    } 
 }

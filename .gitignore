@@ -1,5 +1,6 @@
-.vscode
-firmware/
-mdk/
+.vscode/*
+App/firmware/*
+App/mdk/*
 Bootloader/build/*
+Bootloader/.vscode/*
 !Bootloader/build/bootloader.bin
