@@ -2,6 +2,7 @@
 
 int boot_check_app(uint32_t app_addr)
 {
+    // 读程序开始位置中断向量表的首位(即堆栈指针)
     uint32_t sp = *(volatile uint32_t *)app_addr;
 
     // STM32 RAM 地址范围：0x20000000 ~ 0x20020000 (F407)

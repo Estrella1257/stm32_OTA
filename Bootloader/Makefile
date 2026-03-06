@@ -28,13 +28,15 @@ CPU     := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
 INC_DIRS := \
     inc \
     platform/cmsis/core \
-    platform/cmsis/device
+    platform/cmsis/device \
+    platform/driver/inc
 
 # 包含 .c 源文件的路径
 SRC_DIRS := \
     src \
     platform/cmsis/device \
-	platform/driver
+	platform/driver/src   \
+	driver
 
 STARTUP_DIR := startup
 LINKER_DIR  := linker
@@ -62,6 +64,7 @@ DEPS := $(OBJS:.o=.d)
 CFLAGS  := $(CPU) -O0 -g -Wall -ffreestanding -fno-builtin
 #CFLAGS += -Wno-misleading-indentation
 CFLAGS  += -DSTM32F40_41xxx
+CFLAGS  += -DUSE_STDPERIPH_DRIVER
 CFLAGS  += -MMD -MP
 CFLAGS  += $(addprefix -I,$(INC_DIRS))
 

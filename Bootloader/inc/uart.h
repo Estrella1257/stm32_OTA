@@ -1,8 +1,12 @@
-#ifndef __USART_H
-#define __USART_H
+#ifndef __UART_H
+#define __UART_H
 
 #include <stdint.h>
 #include <stdio.h>
+
+extern uint8_t ymodem_rx_buffer[];
+extern volatile uint16_t ymodem_rx_len;
+extern volatile uint8_t  ymodem_rx_flag;
 
 // 初始化串口 (默认波特率 115200)
 void UART_Init(void);

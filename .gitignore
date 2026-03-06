@@ -3,4 +3,5 @@ App/firmware/*
 App/mdk/*
 Bootloader/build/*
 Bootloader/.vscode/*
+Bootloader/platform/driver/*
 !Bootloader/build/bootloader.bin

@@ -35,7 +35,7 @@ void LED_OFF(void) {
 int main(void)
 {
     __enable_irq();
-    SCB->VTOR = 0x08008000;
+    SCB->VTOR = 0x08020000;
 
     board_lowlevel_init();
     usart_init();

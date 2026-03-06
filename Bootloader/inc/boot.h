@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define APP_START_ADDR  0x08008000
+// #define APP_START_ADDR  0x08008000
 
 typedef void (*app_entry_t)(void);
 
