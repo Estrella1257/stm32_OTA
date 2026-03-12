@@ -5,7 +5,6 @@
 #include <stdio.h>
 
 void ymodem_crc16_init(void);
-uint16_t YModem_CRC16(uint8_t *data, uint32_t len);
-
+uint16_t ymodem_crc16(uint8_t *data, uint32_t len);
 
 #endif

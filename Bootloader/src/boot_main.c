@@ -2,7 +2,8 @@
 #include "ota_config.h"
 #include <stdio.h>
 #include "uart.h"
-#include "hal_flash.h"
+#include "hal_flash_boot.h"
+#include "ymodem.h"
 
 extern void SysTick_Init(void);
 
@@ -15,7 +16,7 @@ int main(void)
     printf("Bootloader V1.0 start...\r\n");
 
     // 2. 核心魔法：用指针直接指向 Flash 中的 NVS 地址
-    ota_info_t *p_ota = (ota_info_t *)NVS_SECTOR_ADDR;
+    ota_info_t *p_ota = (ota_info_t *)NVS_A_START_ADDR;
 
     // 3. 判断状态机的走向
     printf("Checking OTA Status: 0x%08lX\r\n", p_ota->boot_flag);
@@ -37,10 +38,10 @@ int main(void)
     }
 
     // 4. 最终归宿：跳转到 APP
-    printf("Jumping to APP_A (0x%08X)...\r\n", APP_A_ADDR);
-    if (boot_check_app(APP_A_ADDR))
+    printf("Jumping to APP_A (0x%08X)...\r\n", APP_START_ADDR);
+    if (boot_check_app(APP_START_ADDR))
     {
-        boot_jump_to_app(APP_A_ADDR);
+        boot_jump_to_app(APP_START_ADDR);
     }
     else
     {
@@ -51,8 +52,8 @@ int main(void)
         if (YModem_Receive() == 0) 
         {
             // 接收成功，验证写入的数据
-            hal_flash_read(APP_A_ADDR, buffer, 8);
-            printf("Flash Address: 0x%08lX\r\n", (uint32_t)APP_A_ADDR);
+            hal_flash_read(APP_START_ADDR, buffer, 8);
+            printf("Flash Address: 0x%08lX\r\n", (uint32_t)APP_START_ADDR);
             printf("Raw Data: ");
             for(int i=0; i<8; i++) printf("%02X ", buffer[i]);
             printf("\r\n");

@@ -6,6 +6,8 @@ static usart_receive_callback_t receive_callback = NULL;
 
 void usart_init(void) 
 {
+    USART_DeInit(USART1);
+
     GPIO_InitTypeDef GPIO_InitStruct;
     GPIO_StructInit(&GPIO_InitStruct);
     GPIO_InitStruct.GPIO_Pin = GPIO_Pin_9 | GPIO_Pin_10;
@@ -72,8 +74,19 @@ void usart_receive_register(usart_receive_callback_t callback)
 
 void USART1_IRQHandler(void)
 {
+    // 护盾：万一因为别的中断卡顿导致溢出，强行疏通！
+    if (USART_GetFlagStatus(USART1, USART_FLAG_ORE) != RESET) {
+        USART_ReceiveData(USART1); 
+    }
+
     if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET) {
         uint8_t data = (uint8_t)USART_ReceiveData(USART1);
+        
+        // 防火墙：直接扔掉回车和换行，只留纯指令
+        if (data == '\r' || data == '\n' || data == ' ') {
+            return; 
+        }
+
         if (receive_callback) {
             receive_callback(data);
         }

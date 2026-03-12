@@ -33,3 +33,15 @@ void led_off(const led_desc_t *desc)
 {
     GPIO_WriteBit(desc->port,desc->pin,desc->off_lvl);
 }
+
+void led_toggle(const led_desc_t *desc)
+{
+    // 读取当前引脚的输出状态
+    if (GPIO_ReadOutputDataBit(desc->port, desc->pin)) {
+        // 如果当前是高电平，则拉低
+        GPIO_WriteBit(desc->port, desc->pin, Bit_RESET); 
+    } else {
+        // 如果当前是低电平，则拉高
+        GPIO_WriteBit(desc->port, desc->pin, Bit_SET);   
+    }
+}

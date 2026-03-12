@@ -32,7 +32,7 @@ void ymodem_crc16_init(void)
 }
 
 // YModem 查表法计算 CRC16 (速度极快)
-uint16_t YModem_CRC16(uint8_t *data, uint32_t len)
+uint16_t ymodem_crc16(uint8_t *data, uint32_t len)
 {
     uint16_t crc = 0x0000; // YModem 的初始值通常为 0
 

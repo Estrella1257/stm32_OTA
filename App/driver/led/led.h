@@ -19,5 +19,6 @@ void led_init(const led_desc_t*desc);
 void led_deinit(const led_desc_t*desc);
 void led_on(const led_desc_t*desc);
 void led_off(const led_desc_t*desc);
+void led_toggle(const led_desc_t *desc);
 
 #endif

@@ -3,8 +3,7 @@
 #include "ota_config.h" 
 #include "uart.h"
 #include "crc16.h"
-#include "hal_flash.h"
-#include "crc16.h"
+#include "hal_flash_boot.h"
 
 /**
   * @brief  验证 YModem 数据包
@@ -37,7 +36,7 @@ int8_t YModem_VerifyPacket(uint8_t *pData, uint16_t length, uint32_t *pPayloadSi
     received_crc = (pData[3 + payload_len] << 8) | pData[3 + payload_len + 1];
     
     // 5. 调用极速查表法 CRC16计算数据区
-    calculated_crc = YModem_CRC16(&pData[3], payload_len);
+    calculated_crc = ymodem_crc16(&pData[3], payload_len);
 
     if (calculated_crc != received_crc) return -1; // 指纹不匹配！
 
@@ -50,7 +49,7 @@ extern uint32_t Get_System_Tick(void);
 int8_t YModem_Receive(void)
 {
     YModem_State_t state = YMODEM_STATE_INIT;
-    uint32_t flash_ptr = APP_A_ADDR; // 固件存入 A 区
+    uint32_t flash_ptr = APP_START_ADDR; // 固件存入 APP 区
     uint32_t payload_size = 0;
     uint8_t  expected_packet_num = 0;
     
@@ -86,12 +85,15 @@ int8_t YModem_Receive(void)
                         {
                             printf("INFO: Packet 0 Received. Filename: %s\r\n", &ymodem_rx_buffer[3]);
                             
-                            // 极其重要：在这里擦除 Flash APP_B 所在的扇区！
+                            // 极其重要：在这里擦除 Flash APP 所在的扇区！
                             printf("Erasing Flash sectors for App B...\r\n");
+                            hal_flash_erase(0x08010000); // 擦除 Sector 4
                             hal_flash_erase(0x08020000); // 擦除 Sector 5
                             hal_flash_erase(0x08040000); // 擦除 Sector 6
                             hal_flash_erase(0x08060000); // 擦除 Sector 7
-                            printf("INFO: APP_A Flash Erased.\r\n");
+                            hal_flash_erase(0x08080000); // 擦除 Sector 8
+                            hal_flash_erase(0x080A0000); // 擦除 Sector 9
+                            printf("INFO: APP Flash Erased.\r\n");
 
                             expected_packet_num++; // 下一个期待的是第 1 包
                             UART_SendChar(YMODEM_ACK);

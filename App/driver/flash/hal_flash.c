@@ -19,22 +19,32 @@ static uint32_t GetSector(uint32_t address) {
     return 0xFFFFFFFF;
 }
 
-static int check_address_bounds(uint32_t address, uint32_t len) {
-    uint32_t end_addr = address + len;
-    
-    // 1. 检查是否完全在 NVS 区 (Sector 4)
-    if (address >= NVS_SECTOR_ADDR && end_addr <= (NVS_SECTOR_ADDR + NVS_SECTOR_SIZE)) return 1;
-    
-    // 2. 检查是否完全在 APP_A 区 (Sector 5, 6, 7)
-    if (address >= APP_A_ADDR && end_addr <= (APP_A_ADDR + APP_PART_SIZE)) return 1;
-    
-    // 3. 检查是否完全在 APP_B 区 (Sector 8, 9, 10)
-    if (address >= APP_B_ADDR && end_addr <= (APP_B_ADDR + APP_PART_SIZE)) return 1;
+static int check_address_bounds(uint32_t address, uint32_t len)
+{
+    uint32_t end_addr;
 
-    // 4. (可选) 检查是否完全在 资源 区 (Sector 11)
-    if (address >= 0x080E0000 && end_addr <= (0x080E0000 + RES_PART_SIZE)) return 1;
+    // len=0 视为合法空操作 
+    if (len == 0) {
+        return 1;
+    }
 
-    // 任何越界、跨区访问、或者试图触碰 Bootloader 的行为，一律封杀
+    // 防止 uint32_t 溢出 
+    if (address > 0xFFFFFFFF - (len - 1)) {
+        return 0;
+    }
+    end_addr = address + len - 1;  /* inclusive end */
+
+    // 1. NVS_A: S2 
+    if ((address >= NVS_A_START_ADDR) && (end_addr <= NVS_A_END_ADDR)) {
+        return 1;
+    }
+
+    // 2. NVS_B: S3 
+    if ((address >= NVS_B_START_ADDR) && (end_addr <= NVS_B_END_ADDR)) {
+        return 1;
+    }
+
+    // 其他区域(含Bootloader和App)全部拒绝 
     return 0;
 }
 
@@ -45,7 +55,7 @@ int hal_flash_init(void) {
 int hal_flash_erase(uint32_t address) {
     // 1. 计算扇区索引
     uint32_t sector_ID = GetSector(address);
-    if (sector_ID < FLASH_Sector_4 || sector_ID > FLASH_Sector_11) {
+    if (sector_ID != FLASH_Sector_2 && sector_ID != FLASH_Sector_3) {
         printf("[flash] error: invalid erase address 0x%08lX (Protected Area)!\n", address);
         return HAL_ERR_PARAM;
     }
@@ -80,7 +90,7 @@ cleanup:
     return ret;
 }
 
-int hal_flash_write(uint32_t address, const uint8_t *buffer, uint32_t len) {
+int hal_flash_write(uint32_t address, const void *buffer, uint32_t len) {
     // 1. 极其严格的写入沙盒检查
     if (!check_address_bounds(address, len)) {
         printf("[flash] error: write 0x%08lX (len %ld) out of sandbox bounds!\n", address, len);
@@ -126,20 +136,52 @@ cleanup:
     FLASH_Lock();
     __enable_irq();
 
+    // // 【标准库法：杀灭缓存幽灵】
+    // // 每次修改完 Flash 后，必须强行清空 ART 缓存
+
+    // // 1. 先关闭缓存
+    // FLASH_DataCacheCmd(DISABLE);
+    // FLASH_InstructionCacheCmd(DISABLE);
+    
+    // // 2. 触发缓存复位 (注意这里用的是你头文件里的纯净版函数名)
+    // FLASH_DataCacheReset();
+    // FLASH_InstructionCacheReset();
+    
+    // // 3. 重新开启缓存
+    // FLASH_InstructionCacheCmd(ENABLE);
+    // FLASH_DataCacheCmd(ENABLE);
+
+    // if (ret != HAL_OK) return ret;
+
+    // // 3.写入后回读校验 (Check-After-Write)
+    // // 只比对用户要求的有效长度，忽略 Padding
+    // if (memcmp((void*)address, buffer, len) != 0) {
+    //     printf("[flash] error: verify failed at 0x%08lX!\n", address);
+    //     return HAL_ERR_VERIFY;
+    // }
+
+    // return HAL_OK;
+
     if (ret != HAL_OK) return ret;
 
-    // 3.写入后回读校验 (Check-After-Write)
-    // 只比对用户要求的有效长度，忽略 Padding
-    if (memcmp((void*)address, buffer, len) != 0) {
-        printf("[flash] error: verify failed at 0x%08lX!\n", address);
-        return HAL_ERR_VERIFY;
+    // 【暴力 X 光校验】抛弃 memcmp，用 volatile 强行读取物理地址
+    // 如果失败，精准打印出“期望值”和“实际读到的值”
+    volatile uint8_t *flash_ptr = (volatile uint8_t *)address;
+    const uint8_t *buf_ptr = (const uint8_t *)buffer;
+    
+    for (uint32_t i = 0; i < len; i++) {
+        if (flash_ptr[i] != buf_ptr[i]) {
+            printf("[flash] error: verify failed at 0x%08lX! Expected: %02X, Read: %02X\r\n", 
+                   address + i, buf_ptr[i], flash_ptr[i]);
+            return HAL_ERR_VERIFY;
+        }
     }
 
     return HAL_OK;
 }
 
 
-int hal_flash_read(uint32_t address, const uint8_t *buffer, uint32_t len) {
+int hal_flash_read(uint32_t address, void *buffer, uint32_t len) {
     // 读操作同样受限于沙盒，防止踩到野指针触发 HardFault
     if (!check_address_bounds(address, len)) {
         return HAL_ERR_PARAM;

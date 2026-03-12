@@ -21,6 +21,9 @@ SZ      := $(TOOLCHAIN_PREFIX)size
 # ===============================
 CPU     := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
 
+# 定义共享目录的相对路径 (退回上一级，再进入 Shared)
+SHARED_DIR := ../Shared
+
 # ===============================
 # Directories
 # ===============================
@@ -29,7 +32,8 @@ INC_DIRS := \
     inc \
     platform/cmsis/core \
     platform/cmsis/device \
-    platform/driver/inc
+    platform/driver/inc \
+	$(SHARED_DIR)/inc
 
 # 包含 .c 源文件的路径
 SRC_DIRS := \
@@ -62,7 +66,12 @@ DEPS := $(OBJS:.o=.d)
 # ===============================
 # -MMD -MP: 生成 .d 依赖文件
 CFLAGS  := $(CPU) -O0 -g -Wall -ffreestanding -fno-builtin
-#CFLAGS += -Wno-misleading-indentation
+#告诉编译器，把每一个函数和变量都单独装在一个个小盒子里
+CFLAGS += -ffunction-sections -fdata-sections 
+#关闭（no-）关于“误导性缩进（misleading-indentation）”的警告（-W）。  
+CFLAGS += -Wno-misleading-indentation
+#空间极限优化指令
+CFLAGS += -Os
 CFLAGS  += -DSTM32F40_41xxx
 CFLAGS  += -DUSE_STDPERIPH_DRIVER
 CFLAGS  += -MMD -MP
@@ -72,6 +81,7 @@ CFLAGS  += $(addprefix -I,$(INC_DIRS))
 # Linker Flags
 # ===============================
 LDSCRIPT := $(LINKER_DIR)/STM32F417IGHx_FLASH.ld
+#LDFLAGS += -Wl,--gc-sections: 告诉链接器，去检查这些盒子，谁没被调用过，就直接扔进垃圾桶，绝对不打包进最终的 bin 里
 LDFLAGS  := $(CPU) -specs=nano.specs -specs=nosys.specs -T$(LDSCRIPT) -nostartfiles -Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/$(TARGET).map
 
 # ===============================
