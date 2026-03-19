@@ -12,6 +12,11 @@ static lv_obj_t * headlight_matrix_led;
 
 LV_FONT_DECLARE(lv_font_montserrat_28);
 
+// 独立心脏起搏器：什么都不干，只为了每 20ms 踢醒 LVGL 一次
+static void ui_heartbeat_cb(lv_timer_t * timer) {
+    (void)timer; 
+}
+
 void ui_init(lv_disp_t *disp)
 {
     lv_obj_t * scr = lv_disp_get_scr_act(disp);
@@ -87,6 +92,8 @@ void ui_init(lv_disp_t *disp)
     lv_label_set_text(odo_label, "ODO: 0.0 km");
     lv_obj_set_style_text_color(odo_label, lv_color_hex(0x888888), 0);
     lv_obj_align(odo_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+
+    lv_timer_create(ui_heartbeat_cb, 20, NULL);
 }
 
 // 这里的更新逻辑完全不用变！只需要接管 UI 就行！
@@ -132,6 +139,4 @@ void ui_update_dashboard(int speed, int battery, int gear, bool wifi_on, bool he
     int odo_int = (int)odo;
     int odo_dec = (int)(odo * 10) % 10;
     lv_label_set_text_fmt(odo_label, "ODO: %d.%d km", odo_int, odo_dec);
-
-    //lv_label_set_text_fmt(odo_label, "ODO: %.1f km", odo);
 }

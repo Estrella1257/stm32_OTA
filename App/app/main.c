@@ -16,8 +16,15 @@ SystemConfig_t g_sys_cfg;
 
 extern const NvsPort_t stm32_nvs_port;
 
+extern volatile uint8_t g_ui_update_flag;
+
+int16_t global_sim_speed = 0;     
+uint8_t global_sim_battery = 100; 
+uint8_t global_sim_gear = 0;    
+uint8_t global_sim_enable = 0;    
+
 // 串口中断回调 
-static void usart_received(uint8_t data)
+static void usart1_received(uint8_t data)
 {
     if (data == '\r' || data == '\n' || data == ' ') return;
     g_rx_data = data;
@@ -32,6 +39,39 @@ void led(void) {
     led_on(&led1);   
     led_on(&led2);   
     led_on(&led3);
+}
+
+void ESP32_Send_Dashboard_Data(int16_t speed, uint8_t battery, uint8_t gear) 
+{
+    uint8_t tx_buffer[9];
+    uint16_t checksum = 0;
+
+    tx_buffer[0] = 0xAA; // header1
+    tx_buffer[1] = 0x55; // header2
+    tx_buffer[2] = 0x01; // cmd: CMD_REPORT_STATE
+    tx_buffer[3] = 0x04; // len: 速度(2) + 电量(1) + 档位(1) = 4 字节
+
+    // 核心修改：将 int16_t 拆分为两个独立的字节 (小端序)
+    tx_buffer[4] = (uint8_t)(speed & 0xFF);         // 速度低 8 位 (Low Byte)
+    tx_buffer[5] = (uint8_t)((speed >> 8) & 0xFF);  // 速度高 8 位 (High Byte)
+    
+    tx_buffer[6] = battery; // 电量
+    tx_buffer[7] = gear;    // 档位
+
+    // 计算校验和 (前 8 个字节累加)
+    for (int i = 0; i < 8; i++) {
+        checksum += tx_buffer[i];
+    }
+    
+    // 取低 8 位作为最终的校验位
+    tx_buffer[8] = (uint8_t)(checksum & 0xFF);
+
+    // 调用标准库 API 发送 9 个字节
+    for (int i = 0; i < 9; i++) {
+        USART_SendData(USART2, tx_buffer[i]);
+        // 等待发送完成标志位
+        while (USART_GetFlagStatus(USART2, USART_FLAG_TC) == RESET);
+    }
 }
 
 // 辅助函数：打印当前 NVS 和系统状态
@@ -77,8 +117,10 @@ int main(void)
     SCB->VTOR = 0x08010000;
 
     board_lowlevel_init();
-    usart_init();
-    usart_receive_register(usart_received);
+    usart1_init();
+    usart2_init();
+    usart1_receive_register(usart1_received);
+    tim3_init();
     led();
 
     // 强杀 ORE 只需要保留在 usart_init 刚配完后的这一次清洗，以及 usart.c 的中断里即可
@@ -117,9 +159,9 @@ int main(void)
     printf("Send '1': Add 100m to Odometer & Save\r\n");
     printf("Send '2': Tune Kp (+0.1) & Save\r\n");
     printf("Send '3': Trigger GC Stress Test (Write 50 times)\r\n");
+    printf("Send '4': [NEW] Toggle ESP32 UI Simulator (ON/OFF)\r\n");
     printf("Send 'R': Hard Reboot (Test Data Persistence)\r\n");
 
-    uint32_t heartbeat = 0;
     while (1) 
     {
         if (g_rx_flag == 1)
@@ -160,6 +202,10 @@ int main(void)
                     printf("\r\n[!] STRESS TEST DONE.\r\n");
                     Print_System_Status(); // 测试完立马打印一次状态，看有没有切扇区
                     break;
+                case '4': // 模拟器开关
+                    global_sim_enable = !global_sim_enable;
+                    printf("\r\n[VCU] ESP32 Cyberpunk Simulator: %s !!!\r\n", global_sim_enable ? "ONLINE" : "💤 OFFLINE");
+                    break;
                 case 'R':
                 case 'r':
                     printf("[!] Resetting...\r\n");
@@ -170,8 +216,39 @@ int main(void)
                     break;
             }
         }
-        
-        heartbeat++;
-        if (heartbeat % 500000 == 0) led_toggle(&led2); 
+
+        if (g_ui_update_flag) {
+            g_ui_update_flag = 0;
+            if (global_sim_enable) {
+                    // 速度逻辑
+                    global_sim_speed++; 
+                    if(global_sim_speed > 85) global_sim_speed = 0;
+
+                    // 电量逻辑
+                    static int battery_tick = 0;
+                    battery_tick++;
+                    if(battery_tick > 10) { 
+                        global_sim_battery--;
+                        if(global_sim_battery == 0) global_sim_battery = 100;
+                        battery_tick = 0;
+                    }
+
+                    // 档位逻辑
+                    if (global_sim_speed == 0) global_sim_gear = 0; 
+                    else if (global_sim_speed < 30) global_sim_gear = 1;
+                    else if (global_sim_speed < 60) global_sim_gear = 2;
+                    else global_sim_gear = 3; 
+
+                    // 封包并发送！
+                    ESP32_Send_Dashboard_Data(global_sim_speed, global_sim_battery, global_sim_gear);
+            }
+            static uint8_t led_time_count = 0;
+            led_time_count++;
+            // 10 次 50ms = 500ms (即半秒钟翻转一次，1Hz 的完美心跳)
+            if (led_time_count >= 10) {  
+                led_toggle(&led2);
+                led_time_count = 0;
+            }
+        }
     }
 }

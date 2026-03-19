@@ -6,8 +6,10 @@
 
 typedef void (*usart_receive_callback_t)(uint8_t data);
 
-void usart_init(void);
-void usart_send_data(const char str[]);
-void usart_receive_register(usart_receive_callback_t callback);
+void usart1_init(void);
+void usart1_send_data(const char str[]);
+void usart1_receive_register(usart_receive_callback_t callback);
+void usart2_init(void);
+void usart2_receive_register(usart_receive_callback_t callback);
 
 #endif

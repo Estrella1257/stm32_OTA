@@ -21,7 +21,6 @@ typedef struct __attribute__((packed)) {
     uint8_t  checksum;    // 校验和
 } Frame_UI_State_t;
 
-// 声明外部可用的解析函数
 void parse_uart_buffer(uint8_t *data, int len);
 
 #endif

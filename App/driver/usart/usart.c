@@ -4,7 +4,7 @@
 
 static usart_receive_callback_t receive_callback = NULL;
 
-void usart_init(void) 
+void usart1_init(void) 
 {
     USART_DeInit(USART1);
 
@@ -37,21 +37,19 @@ void usart_init(void)
     USART_InitStruct.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
     USART_Init(USART1, &USART_InitStruct);
 
-    // GPIO_PinAFConfig(GPIOA, GPIO_PinSource9, GPIO_AF_USART1);
-    // GPIO_PinAFConfig(GPIOA, GPIO_PinSource10, GPIO_AF_USART1);
-
     USART_Cmd(USART1, ENABLE);
     USART_ReceiveData(USART1);
     USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);
 }
 
-void usart_send_data(const char str[])
+void usart1_send_data(const char str[])
 {
     int length = strlen(str);
     for (uint16_t i = 0; i < length; i++) {
         USART_ClearFlag(USART1, USART_FLAG_TC);
         USART_SendData(USART1, str[i]);
         while (USART_GetFlagStatus(USART1, USART_FLAG_TC) == RESET);
+
     }
 }
 
@@ -67,7 +65,7 @@ int fputc(int c,FILE *stream)
 }
 
 
-void usart_receive_register(usart_receive_callback_t callback)
+void usart1_receive_register(usart_receive_callback_t callback)
 {
     receive_callback = callback;
 }
@@ -89,6 +87,70 @@ void USART1_IRQHandler(void)
 
         if (receive_callback) {
             receive_callback(data);
+        }
+    } 
+}
+
+static usart_receive_callback_t usart2_receive_callback = NULL;
+
+void usart2_init(void) 
+{
+    USART_DeInit(USART2);
+
+    GPIO_InitTypeDef GPIO_InitStruct;
+    GPIO_StructInit(&GPIO_InitStruct);
+    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_2 | GPIO_Pin_3;
+    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
+    GPIO_InitStruct.GPIO_Speed = GPIO_High_Speed;
+    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource2, GPIO_AF_USART2);
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource3, GPIO_AF_USART2);
+
+    NVIC_InitTypeDef NVIC_InitStruct;
+    memset(&NVIC_InitStruct, 0, sizeof(NVIC_InitTypeDef));
+    NVIC_InitStruct.NVIC_IRQChannel = USART2_IRQn;
+    NVIC_InitStruct.NVIC_IRQChannelPreemptionPriority = 6; // 优先级比 USART1 略低
+    NVIC_InitStruct.NVIC_IRQChannelSubPriority = 0;
+    NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStruct);
+
+    USART_InitTypeDef USART_InitStruct;
+    USART_StructInit(&USART_InitStruct);
+    USART_InitStruct.USART_BaudRate = 115200;
+    USART_InitStruct.USART_WordLength = USART_WordLength_8b;
+    USART_InitStruct.USART_StopBits = USART_StopBits_1;
+    USART_InitStruct.USART_Parity = USART_Parity_No;
+    USART_InitStruct.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
+    USART_InitStruct.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+    USART_Init(USART2, &USART_InitStruct);
+
+    USART_Cmd(USART2, ENABLE);
+    USART_ReceiveData(USART2);
+    USART_ITConfig(USART2, USART_IT_RXNE, ENABLE);
+}
+
+void usart2_receive_register(usart_receive_callback_t callback)
+{
+    usart2_receive_callback = callback;
+}
+
+// USART2 中断服务函数
+void USART2_IRQHandler(void)
+{
+    if (USART_GetFlagStatus(USART2, USART_FLAG_ORE) != RESET) {
+        USART_ReceiveData(USART2); 
+    }
+
+    if (USART_GetITStatus(USART2, USART_IT_RXNE) != RESET) {
+        uint8_t data = (uint8_t)USART_ReceiveData(USART2);
+        
+        // 这里绝对不能过滤 '\r', '\n', ' '
+        // 因为 ESP32 发回来的二进制校验和或者数据，完全可能等于 0x0D 或 0x0A！
+        
+        if (usart2_receive_callback) {
+            usart2_receive_callback(data);
         }
     } 
 }
