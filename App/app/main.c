@@ -5,7 +5,8 @@
 #include "main.h"
 #include "usart.h"
 #include "nvs_api.h"        
-#include "nvs_types.h"      
+#include "nvs_types.h"    
+#include "ringbuffer.h"  
 
 // 全局变量区
 volatile uint8_t g_rx_data = 0;
@@ -22,6 +23,10 @@ int16_t global_sim_speed = 0;
 uint8_t global_sim_battery = 100; 
 uint8_t global_sim_gear = 0;    
 uint8_t global_sim_enable = 0;    
+
+#define RX_POOL_SIZE 2048
+uint8_t g_rx_pool[RX_POOL_SIZE];
+ringbuffer_t g_rx_ringbuffer;
 
 // 串口中断回调 
 static void usart1_received(uint8_t data)
@@ -66,12 +71,7 @@ void ESP32_Send_Dashboard_Data(int16_t speed, uint8_t battery, uint8_t gear)
     // 取低 8 位作为最终的校验位
     tx_buffer[8] = (uint8_t)(checksum & 0xFF);
 
-    // 调用标准库 API 发送 9 个字节
-    for (int i = 0; i < 9; i++) {
-        USART_SendData(USART2, tx_buffer[i]);
-        // 等待发送完成标志位
-        while (USART_GetFlagStatus(USART2, USART_FLAG_TC) == RESET);
-    }
+    usart2_send_data_dma(tx_buffer, 9);
 }
 
 // 辅助函数：打印当前 NVS 和系统状态
@@ -118,9 +118,10 @@ int main(void)
 
     board_lowlevel_init();
     usart1_init();
-    usart2_init();
+    usart2_init_dma();
     usart1_receive_register(usart1_received);
     tim3_init();
+    ringbuffer_init(&g_rx_ringbuffer, g_rx_pool, RX_POOL_SIZE);
     led();
 
     // 强杀 ORE 只需要保留在 usart_init 刚配完后的这一次清洗，以及 usart.c 的中断里即可
@@ -162,8 +163,59 @@ int main(void)
     printf("Send '4': [NEW] Toggle ESP32 UI Simulator (ON/OFF)\r\n");
     printf("Send 'R': Hard Reboot (Test Data Persistence)\r\n");
 
+    uint8_t esp32_rx_buffer[128];
+
     while (1) 
     {
+        // 第一步：把 DMA 硬件收到的零碎数据，全部倾泻到我们庞大的软件环形缓冲区中 
+        uint16_t esp_rx_len = usart2_get_buffered_data_len();
+        if (esp_rx_len > 0) {
+            uint8_t temp_buf[128]; 
+            // 假设单次碎包不会超过128
+            if(esp_rx_len > 128) esp_rx_len = 128; 
+            
+            // 从 DMA 把数据拔出来
+            usart2_read_bytes(temp_buf, esp_rx_len);
+            // 无脑塞进我们的共用大水池
+            ringbuffer_write_block(&g_rx_ringbuffer, temp_buf, esp_rx_len); 
+        }
+
+       // 第二步：从水池里捞鱼并按行完整打印 (Line Buffer 模式) 
+        static uint8_t line_buf[128];
+        static uint16_t line_idx = 0;
+
+        // 只要水池里有数据，就一个字节一个字节地往外抽
+        while (ringbuffer_get_length(&g_rx_ringbuffer) > 0) {
+            uint8_t ch;
+            ringbuffer_read_byte(&g_rx_ringbuffer, &ch);
+
+            // 遇到换行符 (\n)，代表一句话结束了
+            if (ch == '\n') {
+                line_buf[line_idx] = '\0'; // 封口，变成标准的 C 语言字符串
+                
+                // 过滤掉可能只有单 \r 或空行的情况
+                if (line_idx > 0) { 
+                    printf("\r\n[RingBuffer POP] message: %s", line_buf);
+                }
+                line_idx = 0; // 索引清零，准备迎接下一句话
+            } 
+            // 遇到回车符 (\r) 直接丢弃，或者当做空格处理，防止串口终端光标错乱
+            else if (ch == '\r') {
+                continue;
+            }
+            // 普通可见字符，存入行缓冲区
+            else {
+                if (line_idx < sizeof(line_buf) - 1) {
+                    line_buf[line_idx++] = ch;
+                } else {
+                    // 防火墙：如果 ESP32 发疯，超过 127 字节都没发换行符，强行截断打印防爆栈
+                    line_buf[line_idx] = '\0';
+                    printf("\r\n[RingBuffer WARN] too long: %s", line_buf);
+                    line_idx = 0;
+                }
+            }
+        }
+
         if (g_rx_flag == 1)
         {
             char cmd = g_rx_data;
@@ -239,7 +291,7 @@ int main(void)
                     else if (global_sim_speed < 60) global_sim_gear = 2;
                     else global_sim_gear = 3; 
 
-                    // 封包并发送！
+                    // 封包并发送
                     ESP32_Send_Dashboard_Data(global_sim_speed, global_sim_battery, global_sim_gear);
             }
             static uint8_t led_time_count = 0;
