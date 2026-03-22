@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include "ymodem.h"
-#include "ota_config.h" 
 #include "uart.h"
 #include "crc16.h"
 #include "hal_flash_boot.h"

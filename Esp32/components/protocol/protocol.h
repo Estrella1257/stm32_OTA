@@ -22,5 +22,6 @@ typedef struct __attribute__((packed)) {
 } Frame_UI_State_t;
 
 void parse_uart_buffer(uint8_t *data, int len);
+void protocol_send_ota_trigger(void);
 
 #endif

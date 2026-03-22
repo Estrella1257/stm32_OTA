@@ -10,5 +10,6 @@ extern const led_desc_t led3;
 extern const led_desc_t led4;
 void board_lowlevel_init(void);
 void tim3_init(void);
+void System_Reset_State(void);
 
 #endif

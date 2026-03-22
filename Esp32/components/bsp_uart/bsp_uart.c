@@ -35,15 +35,6 @@ static void uart_rx_task(void *arg)
 
     uint8_t *data = (uint8_t *) malloc(MY_UART_BUF_SIZE);
 
-    // while (1) {
-    //     int len = uart_read_bytes(MY_UART_PORT_NUM, data, 128, pdMS_TO_TICKS(10));
-    //     if (len > 0) {
-    //         // 把收到的数据扔给 protocol 组件去拆包
-    //         parse_uart_buffer(data, len);
-    //     }
-    //     vTaskDelay(1);
-    // }
-
     while (1) {
         size_t length = 0;
         
