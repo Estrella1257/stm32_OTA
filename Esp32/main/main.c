@@ -6,6 +6,8 @@
 #include "ui.h"         
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
+#include "driver/uart.h"
+#include "protocol.h"
 
 // 全局神经枢纽
 volatile int16_t global_real_speed = 0; 
@@ -26,6 +28,8 @@ void app_main(void)
     lvgl_port_lock(portMAX_DELAY); 
     ui_init(disp);
     lvgl_port_unlock();
+
+    protocol_service_start();
 
     // 3. 进入主循环 (20Hz 极速刷新) 
     int last_speed = -1;

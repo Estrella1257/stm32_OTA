@@ -12,6 +12,7 @@
 #define MY_UART_BUF_SIZE      1024
 
 extern volatile int16_t global_real_speed; 
+extern volatile bool g_start_ymodem_transfer;
 
 static void uart_rx_task(void *arg)
 { 
@@ -51,10 +52,11 @@ static void uart_rx_task(void *arg)
                 parse_uart_buffer(data, len);
                 
                 // 终极测谎仪：插个眼，看看到底是不是每 50 毫秒收到一次数据
-                // (如果嫌打印太快卡顿，测试完可以把这句 printf 注释掉)
-                printf("[UART] Time: %lu ms | Speed: %d\n", 
-                      (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS), 
-                      global_real_speed);
+                if (g_start_ymodem_transfer == false) {
+                    printf("[UART] Time: %lu ms | Speed: %d\n", 
+                          (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS), 
+                          global_real_speed);
+                }
             }
         }
         
