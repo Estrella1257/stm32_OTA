@@ -64,7 +64,7 @@ int8_t YModem_Receive(void)
             // 假设 Get_System_Tick() 返回毫秒。每隔 1000ms 发送一个 'C'
             if (Get_System_Tick() - last_c_time >= 1000) 
             {
-                UART_SendChar(YMODEM_C);
+                UART2_SendChar(YMODEM_C);
                 last_c_time = Get_System_Tick();
             }
         }
@@ -73,6 +73,8 @@ int8_t YModem_Receive(void)
         if (ymodem_rx_flag == 1)
         {
             ymodem_rx_flag = 0; // 必须第一时间修改标志位，让 DMA 准备接下一包
+
+            printf("\r\n[DEBUG] USART2 DMA RX Triggered! Length: %d bytes\r\n", ymodem_rx_len);
 
             switch (state)
             {
@@ -95,8 +97,8 @@ int8_t YModem_Receive(void)
                             printf("INFO: APP Flash Erased.\r\n");
 
                             expected_packet_num++; // 下一个期待的是第 1 包
-                            UART_SendChar(YMODEM_ACK);
-                            UART_SendChar(YMODEM_C);   // 告诉上位机：我准备好接收正文了
+                            UART2_SendChar(YMODEM_ACK);
+                            UART2_SendChar(YMODEM_C);   // 告诉上位机：我准备好接收正文了
                             state = YMODEM_STATE_RECEIVING;
                         }
                     }
@@ -107,7 +109,7 @@ int8_t YModem_Receive(void)
                     // 如果收到传输结束标志 EOT
                     if (ymodem_rx_buffer[0] == YMODEM_EOT)
                     {
-                        UART_SendChar(YMODEM_NAK); // YModem 规定：第一次收到 EOT 必须假装没听清回 NAK
+                        UART2_SendChar(YMODEM_NAK); // YModem 规定：第一次收到 EOT 必须假装没听清回 NAK
                         state = YMODEM_STATE_END;
                     }
                     // 如果收到正常数据包
@@ -120,25 +122,25 @@ int8_t YModem_Receive(void)
                             {
                                 flash_ptr += payload_size;
                                 expected_packet_num++;
-                                UART_SendChar(YMODEM_ACK);
+                                UART2_SendChar(YMODEM_ACK);
                             }
                             else
                             {
                                 printf("ERROR: Flash write failed at 0x%08lX!\r\n", flash_ptr);
-                                UART_SendChar(YMODEM_CAN);
+                                UART2_SendChar(YMODEM_CAN);
                                 return -1;
                             }
                         }
                         else if (ymodem_rx_buffer[1] == (uint8_t)(expected_packet_num - 1))
                         {
                             // 收到重复包（上位机没收到上一个ACK），只回 ACK，不写 Flash
-                            UART_SendChar(YMODEM_ACK);
+                            UART2_SendChar(YMODEM_ACK);
                         }
                     }
                     else 
                     {
                         printf("\r\nERROR: Packet verify failed! Sending NAK...\r\n");
-                        UART_SendChar(YMODEM_NAK);    
+                        UART2_SendChar(YMODEM_NAK);    
                     }
                     break;
 
@@ -147,13 +149,13 @@ int8_t YModem_Receive(void)
                     // 第二次收到 EOT
                     if (ymodem_rx_buffer[0] == YMODEM_EOT)
                     {
-                        UART_SendChar(YMODEM_ACK);
-                        UART_SendChar(YMODEM_C); // 索要最后一个空包
+                        UART2_SendChar(YMODEM_ACK);
+                        UART2_SendChar(YMODEM_C); // 索要最后一个空包
                     }
                     // 收到最后的空包 (SOH 开头，数据为空)
                     else if (ymodem_rx_buffer[0] == YMODEM_SOH)
                     {
-                        UART_SendChar(YMODEM_ACK);
+                        UART2_SendChar(YMODEM_ACK);
                      
                         printf("\r\nINFO: Transfer Complete!\r\n");
                         return 0; // 成功退出主循环！

@@ -8,10 +8,8 @@ extern uint8_t ymodem_rx_buffer[];
 extern volatile uint16_t ymodem_rx_len;
 extern volatile uint8_t  ymodem_rx_flag;
 
-// 初始化串口 (默认波特率 115200)
-void UART_Init(void);
-
-// 发送一个字符
-void UART_SendChar(uint8_t ch);
+void UART1_Log_Init(void);
+void UART2_YModem_Init(void);
+void UART2_SendChar(uint8_t ch);
 
 #endif

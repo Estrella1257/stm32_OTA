@@ -12,9 +12,10 @@ int main(void)
     uint8_t buffer[8];
     // 1. 初始化硬件
     SysTick_Init();
-    UART_Init();
+    UART1_Log_Init();
+    UART2_YModem_Init();
     printf("\r\n=================================\r\n");
-    printf(" Bootloader V1.1 start...\r\n");
+    printf(" Bootloader V1.2 start...\r\n");
     printf("=================================\r\n");
 
     // 2. 核心魔法：开启 PWR 时钟并解锁 RTC 备份域访问
