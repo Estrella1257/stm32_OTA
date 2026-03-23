@@ -6,3 +6,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
 project(ESP32)
+set(PARTITION_CSV "${CMAKE_CURRENT_LIST_DIR}/partitions.csv")
+set(CONFIG_PARTITION_TABLE_CUSTOM Y)

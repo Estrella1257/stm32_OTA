@@ -105,9 +105,7 @@ static usart_receive_callback_t usart2_frame_callback = NULL;
 
 void usart2_init_dma(void) 
 {
-    // 1. 开启时钟：GPIOA, USART2, DMA1 (F407 的 USART2 挂在 APB1，DMA1 在 AHB1) 
-    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA | RCC_AHB1Periph_DMA1, ENABLE);
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2, ENABLE);
+    USART_DeInit(USART2);
 
     /* --- GPIO 初始化 (与你原来一致) --- */
     GPIO_InitTypeDef GPIO_InitStruct;

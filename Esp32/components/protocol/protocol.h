@@ -37,7 +37,7 @@ typedef struct __attribute__((packed)) {
 
 void parse_uart_buffer(uint8_t *data, int len);
 void protocol_send_ota_trigger(void);
-bool protocol_ymodem_send_file(const char *filename, const uint8_t *file_data, uint32_t file_size);
 void protocol_service_start(void);
+bool protocol_ymodem_send_file(const char *filepath, const char *filename);
 
 #endif
