@@ -73,8 +73,7 @@ int8_t YModem_Receive(void)
         if (ymodem_rx_flag == 1)
         {
             ymodem_rx_flag = 0; // 必须第一时间修改标志位，让 DMA 准备接下一包
-
-            printf("\r\n[DEBUG] USART2 DMA RX Triggered! Length: %d bytes\r\n", ymodem_rx_len);
+            printf("\r\n[YMODEM] USART2 DMA RX Triggered! Length: %d bytes\r\n", ymodem_rx_len);
 
             switch (state)
             {
@@ -84,7 +83,8 @@ int8_t YModem_Receive(void)
                     {
                         if (ymodem_rx_buffer[1] == expected_packet_num) // 必须是 0 号包
                         {
-                            printf("INFO: Packet 0 Received. Filename: %s\r\n", &ymodem_rx_buffer[3]);
+                            printf("[YMODEM] Pkt#0 OK! Target: %s\r\n", &ymodem_rx_buffer[3]);
+                            printf("[FLASH] Preparing App space...\r\n");
                             
                             // 极其重要：在这里擦除 Flash APP 所在的扇区！
                             printf("Erasing Flash sectors for App B...\r\n");
@@ -94,7 +94,7 @@ int8_t YModem_Receive(void)
                             hal_flash_erase(0x08060000); // 擦除 Sector 7
                             hal_flash_erase(0x08080000); // 擦除 Sector 8
                             hal_flash_erase(0x080A0000); // 擦除 Sector 9
-                            printf("INFO: APP Flash Erased.\r\n");
+                            printf("[FLASH] Erase complete. Ready for stream.\r\n");
 
                             expected_packet_num++; // 下一个期待的是第 1 包
                             UART2_SendChar(YMODEM_ACK);
@@ -109,6 +109,7 @@ int8_t YModem_Receive(void)
                     // 如果收到传输结束标志 EOT
                     if (ymodem_rx_buffer[0] == YMODEM_EOT)
                     {
+                        printf("[YMODEM] EOT received. Finalizing...\r\n");
                         UART2_SendChar(YMODEM_NAK); // YModem 规定：第一次收到 EOT 必须假装没听清回 NAK
                         state = YMODEM_STATE_END;
                     }
@@ -120,26 +121,31 @@ int8_t YModem_Receive(void)
                             // --- 核心：写入 Flash ---
                             if (hal_flash_write(flash_ptr, &ymodem_rx_buffer[3], payload_size) == HAL_OK)
                             {
+                                if (expected_packet_num % 10 == 0) {
+                                    printf("[YMODEM] Received Pkt#%d -> Written to 0x%08lX\r\n", expected_packet_num, flash_ptr);
+                                }
                                 flash_ptr += payload_size;
                                 expected_packet_num++;
                                 UART2_SendChar(YMODEM_ACK);
                             }
                             else
                             {
-                                printf("ERROR: Flash write failed at 0x%08lX!\r\n", flash_ptr);
+                                printf("[ERR] Flash write failed at 0x%08lX!\r\n", flash_ptr);
                                 UART2_SendChar(YMODEM_CAN);
                                 return -1;
                             }
                         }
                         else if (ymodem_rx_buffer[1] == (uint8_t)(expected_packet_num - 1))
                         {
+                            printf("[WRN] Duplicate Pkt#%d detected. Ack resent.\r\n", ymodem_rx_buffer[1]);
+                            UART2_SendChar(YMODEM_ACK);
                             // 收到重复包（上位机没收到上一个ACK），只回 ACK，不写 Flash
                             UART2_SendChar(YMODEM_ACK);
                         }
                     }
                     else 
                     {
-                        printf("\r\nERROR: Packet verify failed! Sending NAK...\r\n");
+                        printf("[ERR] Packet #%d Verify Failed! (Len: %d)\r\n", expected_packet_num, ymodem_rx_len);
                         UART2_SendChar(YMODEM_NAK);    
                     }
                     break;
@@ -157,7 +163,7 @@ int8_t YModem_Receive(void)
                     {
                         UART2_SendChar(YMODEM_ACK);
                      
-                        printf("\r\nINFO: Transfer Complete!\r\n");
+                        printf("[OK] Transfer complete. All bytes written.\r\n");
                         return 0; // 成功退出主循环！
                     }
                     break;
