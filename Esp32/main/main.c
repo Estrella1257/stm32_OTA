@@ -21,20 +21,19 @@ extern volatile bool g_wifi_connected;
 
 void app_main(void)
 {
-    printf("Dual-Core Communication System\n");
+    printf("ESP32 VCU GATEWAY V1.0\n");
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        printf("[NVS] WRN -> Partition corrupted. Erasing and retrying...\n");
         // 如果 NVS 分区被破坏了，强制擦除再初始化
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
-    ESP_ERROR_CHECK(ret);
+    printf("[NVS] OK -> Flash partition initialized.\n");
 
-    if (!bsp_spiffs_init()) {
-        printf("SPIFFS Mount Failed!\n");
-        return; 
-    }
+    if (!bsp_spiffs_init()) return; 
+    printf("[SYS] BOOT -> Loading drivers: UART, WiFi, LCD...\n");
 
     // 1. 启动底层硬件驱动 
     bsp_uart_init();
@@ -47,7 +46,10 @@ void app_main(void)
     ui_init(disp);
     lvgl_port_unlock();
 
+    printf("[SYS] BOOT -> Starting Protocol Services...\n");
     protocol_service_start();
+
+    printf("[SYS] OK -> All services online. Entering main loop.\n");
 
     // 3. 进入主循环 (20Hz 极速刷新) 
     int last_speed = -1;

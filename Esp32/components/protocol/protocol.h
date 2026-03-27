@@ -6,7 +6,10 @@
 
 // 命令码字典
 #define CMD_REPORT_STATE   0x01  // UI 状态包
-#define CMD_OTA_REQUEST    0x03
+#define CMD_STM32_ALIVE    0x02
+#define CMD_ENTER_BOOT     0x03
+
+#define WEB_SERVER_IP "192.168.201.91"
 
 // 必须加 packed，防止编译器在内存里乱塞空格（字节对齐优化）
 typedef struct __attribute__((packed)) {
@@ -22,6 +25,13 @@ typedef struct __attribute__((packed)) {
     uint8_t  checksum;    // 校验和
 } Frame_UI_State_t;
 
+typedef enum {
+    SYS_STATE_IDLE = 0,         // 日常空闲状态
+    SYS_STATE_DOWNLOADING,      // 正在从 Web 拉取固件
+    SYS_STATE_FLASHING,         // 正在向 STM32 烧录固件
+    SYS_STATE_VERIFYING,        // 死亡倒计时中
+    SYS_STATE_ROLLBACKING       // 灾难回滚中
+} vcu_sys_state_t;
 
 // YModem 协议控制字符字典
 #define YM_SOH      0x01  // 128 字节数据包头

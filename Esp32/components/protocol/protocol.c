@@ -16,8 +16,8 @@ extern volatile int16_t global_gear;
 static uint8_t ring_buf[4096]; 
 static int ring_len = 0;       
 
-// OTA 触发全局旗帜 (由 UDP 任务举起，由 UART 任务消费)
-volatile bool g_start_ymodem_transfer = false;
+volatile vcu_sys_state_t g_vcu_state = SYS_STATE_IDLE;
+volatile bool g_stm32_alive_ping = false;
 
 //第一部分：底层辅助与工具函数                     
 // 1. 发送重启指令给 STM32，让它进入 Bootloader
@@ -28,7 +28,7 @@ void protocol_send_ota_trigger(void)
 
     tx_buffer[0] = 0xAA; 
     tx_buffer[1] = 0x55; 
-    tx_buffer[2] = 0x02; // CMD_START_OTA
+    tx_buffer[2] = CMD_ENTER_BOOT;
     tx_buffer[3] = 0x02; 
 
     tx_buffer[4] = 0x00; 
@@ -61,16 +61,38 @@ static uint8_t ymodem_wait_char(uint32_t timeout_ms)
 {
     uint8_t c = 0;
     int len = uart_read_bytes(UART_NUM_0, &c, 1, pdMS_TO_TICKS(timeout_ms));
-    return (len > 0) ? c : 0x00;
+    return (len > 0) ? c :0x00;
+}
+
+static void report_ota_status(const char* prefix, int value, const char* text_msg) {
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) return;
+    
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = inet_addr(WEB_SERVER_IP);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(8889); // 对应 Python 后台监听的 8889
+
+    char send_buf[128];
+    if (prefix[0] == 'P') {
+        sprintf(send_buf, "P:%d", value); // 进度条 P:50
+    } else {
+        sprintf(send_buf, "%s:%s", prefix, text_msg); // 状态 M:下载成功, E:超时错误
+    }
+
+    sendto(sock, send_buf, strlen(send_buf), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    close(sock);
 }
 
 //第二部分：核心业务逻辑函数                       
 // 【核心】从硬盘读取固件并使用 YModem 发送给 STM32
+
+static int last_percent = -1;
+
 bool protocol_ymodem_send_file(const char *filepath, const char *filename) 
 {
     FILE *f = fopen(filepath, "r");
     if (f == NULL) {
-        printf("[YMODEM] ERR: Cannot open file %s\n", filepath);
         return false;
     }
     
@@ -81,12 +103,30 @@ bool protocol_ymodem_send_file(const char *filepath, const char *filename)
     uint8_t packet[YM_1K_PACKET_SIZE + 5]; 
     uint8_t response;
     
+    // 给 STM32 多留点时间吐开机日志，防止杂音干扰
+    vTaskDelay(pdMS_TO_TICKS(1500));
     uart_flush_input(UART_NUM_0);
 
-    // 阶段 1：等 'C'
-    do {
+    // 1：死锁熔断机制与假 C 过滤
+    int wait_c_timeout = 0;
+    while (1) {
         response = ymodem_wait_char(1000); 
-    } while (response != YM_CHAR_C);
+        wait_c_timeout++;
+        
+        if (wait_c_timeout > 30) {
+            fclose(f);
+            return false;
+        }
+
+        if (response == YM_CHAR_C) {
+            uint8_t garbage;
+            if (uart_read_bytes(UART_NUM_0, &garbage, 1, pdMS_TO_TICKS(20)) > 0) {
+                uart_flush_input(UART_NUM_0);
+            } else {
+                break; 
+            }
+        }
+    }
 
     // 阶段 2：发第 0 包 (文件名)
     memset(packet, 0, YM_PACKET_SIZE + 5);
@@ -101,32 +141,56 @@ bool protocol_ymodem_send_file(const char *filepath, const char *filename)
     if (ymodem_wait_char(15000) != YM_ACK) { fclose(f); return false; }
     if (ymodem_wait_char(15000) != YM_CHAR_C) { fclose(f); return false; }
 
-    // 阶段 3：从文件中 fread 读取发送
+    // 阶段 3：发送实体数据
     uint32_t offset = 0;
     uint8_t seq = 1;
     
     while (offset < file_size) {
         uint32_t remain = file_size - offset;
-        uint16_t chunk_size = (remain >= YM_1K_PACKET_SIZE) ? YM_1K_PACKET_SIZE : YM_PACKET_SIZE;
+        uint16_t chunk_size = (remain >= YM_1K_PACKET_SIZE) ? YM_1K_PACKET_SIZE :YM_PACKET_SIZE;
         
-        packet[0] = (chunk_size == YM_1K_PACKET_SIZE) ? YM_STX : YM_SOH;
+        packet[0] = (chunk_size == YM_1K_PACKET_SIZE) ? YM_STX :YM_SOH;
         packet[1] = seq;
         packet[2] = ~seq;
         
         memset(&packet[3], 0x1A, chunk_size); 
-        fread(&packet[3], 1, (remain > chunk_size) ? chunk_size : remain, f);
+        fread(&packet[3], 1, (remain > chunk_size) ? chunk_size :remain, f);
         
         crc = ymodem_crc16(&packet[3], chunk_size);
         packet[3 + chunk_size] = (uint8_t)(crc >> 8);
         packet[3 + chunk_size + 1] = (uint8_t)(crc & 0xFF);
 
-        uart_write_bytes(UART_NUM_0, (const char*)packet, chunk_size + 5);
-        
-        response = ymodem_wait_char(2000);
-        if (response != YM_ACK) { fclose(f); return false; }
+        // 2：ARQ 单包重传机制 (5条命)
+        int retry_count = 0;
+        bool chunk_success = false;
+
+        while (retry_count < 5) {
+            uart_write_bytes(UART_NUM_0, (const char*)packet, chunk_size + 5);
+            response = ymodem_wait_char(2000); 
+            
+            if (response == YM_ACK) {
+                chunk_success = true;
+                break; 
+            } else if (response == YM_CAN) {
+                fclose(f); return false;
+            } else {
+                retry_count++;
+                uart_flush_input(UART_NUM_0); 
+            }
+        }
+
+        if (chunk_success == false) {
+            fclose(f); return false;
+        }
         
         offset += chunk_size;
         seq++;
+
+        int percent = (int)((offset * 100) / file_size);
+        if (percent != last_percent) { 
+            report_ota_status("P", percent, ""); 
+            last_percent = percent;
+        }
     }
 
     // 阶段 4：发送 EOT
@@ -155,6 +219,12 @@ bool protocol_ymodem_send_file(const char *filepath, const char *filename)
 
 // 【解析】处理从 STM32 发来的日常心跳数据
 void parse_uart_buffer(uint8_t *data, int len) {
+    if (g_vcu_state == SYS_STATE_VERIFYING) {
+        printf("[RAW RX]:");
+        for(int k=0; k<len; k++) printf("%02X ", data[k]);
+        printf("\n");
+    }
+
     if (len <= 0) return;
 
     if (ring_len + len > sizeof(ring_buf)) {
@@ -185,10 +255,11 @@ void parse_uart_buffer(uint8_t *data, int len) {
                     global_battery = ring_buf[i+6];
                     global_gear = ring_buf[i+7];
                 } 
-                // // 旧时代的眼泪：STM32 主动触发 OTA (已屏蔽) 权力已经移交给 Web 端，防止 STM32 的旧命令造成重复触发！
-                // else if (cmd == CMD_OTA_REQUEST) {
-                //     printf("\n[PROTOCOL] received stm32 cmd, but Web UDP is the boss now!\n");
-                // }
+                else if (cmd == CMD_STM32_ALIVE) { 
+                    if (g_vcu_state == SYS_STATE_VERIFYING) {
+                        g_stm32_alive_ping = true;
+                    }
+                }
 
                 i += frame_size; 
                 continue; 
@@ -204,7 +275,80 @@ void parse_uart_buffer(uint8_t *data, int len) {
     ring_len = remain; 
 }
 
-// 第三部分：FreeRTOS 任务调度                      
+// 第三部分：FreeRTOS 任务调度            
+static void ota_worker_task(void *pvParameters) {
+    printf("[OTA] START -> Worker task spawned. Target: DOWNLOAD\n");
+    g_vcu_state = SYS_STATE_DOWNLOADING;
+    
+    if (bsp_http_download_firmware() == true) {
+        printf("[OTA] STEP -> 1. HTTP Download complete.\n");
+        report_ota_status("M", 0, "HTTP 固件下载完成!开始烧录新版本...");
+        
+        g_vcu_state = SYS_STATE_FLASHING;
+        protocol_send_ota_trigger(); 
+        printf("[OTA] STEP -> 2. STM32 Reboot triggered via UART.\n");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        if (protocol_ymodem_send_file("/spiffs/app.bin", "app.bin")) {
+            printf("[OTA] STEP -> 3. YModem flash complete. Entering 15s VERIFY mode.\n");
+            g_vcu_state = SYS_STATE_VERIFYING;
+            g_stm32_alive_ping = false;
+
+            int countdown = 15;
+            while (countdown > 0) {
+                if (g_stm32_alive_ping) break;
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                countdown--;
+                
+                char temp_msg[128];
+                sprintf(temp_msg, "烧录完毕!等待 STM32 新系统存活心跳 (%d 秒)...", countdown);
+                report_ota_status("M", 0, temp_msg);
+                printf("[OTA] VERIF -> Waiting for heartbeat... T-%d s\n", countdown);
+            }
+
+            if (g_stm32_alive_ping) {
+                printf("[OTA] FINAL -> Success! STM32 is alive. Promoting firmware.\n");
+                unlink("/spiffs/current.bin"); 
+                rename("/spiffs/app.bin", "/spiffs/current.bin");
+                report_ota_status("S", 100, "验证成功!新系统已转正并存为备份");
+            } else {
+                printf("[OTA] FINAL -> FAIL! Heartbeat timeout. Executing ROLLBACK!\n");
+                report_ota_status("E", 0, "验证超时!启动灾难回滚...");
+                
+                struct stat st;
+                if (stat("/spiffs/current.bin", &st) == 0) {
+                    printf("[OTA] RBK -> Backup current.bin found. Restoring...\n");
+                    g_vcu_state = SYS_STATE_ROLLBACKING;
+                    protocol_send_ota_trigger(); 
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    
+                    if (protocol_ymodem_send_file("/spiffs/current.bin", "current.bin")) {
+                        printf("[OTA] RBK -> System restored to previous version.\n");
+                        report_ota_status("M", 0, "回滚成功!系统已恢复至备份版本");
+                    } else {
+                        printf("[OTA] FATAL -> Rollback failed midway!\n");
+                        report_ota_status("E", 0, "致命错误：回滚传输过程中中断!");
+                    }
+                } else {
+                    printf("[OTA] FATAL -> No backup firmware found. System BRICKED.\n");
+                    report_ota_status("E", 0, "错误：找不到备份固件，无法回滚!");
+                }
+            }
+        } else {
+            printf("[OTA] ERR -> YModem handshake/transfer failed.\n");
+            report_ota_status("E", 0, "致命错误:YModem 传输失败!");
+        }
+    } else {
+        printf("[OTA] ERR -> HTTP Download failed (Check URL/Server).\n");
+        report_ota_status("E", 0, "致命错误:HTTP 下载失败!");
+    }
+
+    printf("[OTA] FINAL -> Task Finished. Returning to IDLE.\n");
+    g_vcu_state = SYS_STATE_IDLE;
+    vTaskDelete(NULL); 
+}
+
+
 // 【任务 1】负责监听 Web 端发来的 UDP 广播口令
 static void udp_listen_task(void *pvParameters) {
     char rx_buffer[128];
@@ -227,7 +371,7 @@ static void udp_listen_task(void *pvParameters) {
             continue;
         }
 
-        printf("[UDP] Listening for Web Commands on port 8888...\n");
+       printf("[UDP] INIT -> Server bound to port 8888. Listening...\n");
 
         while (1) {
             struct sockaddr_in source_addr;
@@ -237,15 +381,17 @@ static void udp_listen_task(void *pvParameters) {
             
             if (len > 0) {
                 rx_buffer[len] = 0; 
-                printf("[UDP] Received broadcast: %s\n", rx_buffer);
+                printf("[UDP] RECV -> Raw Command: %s\n", rx_buffer);
                 
                 if (strncmp(rx_buffer, "OTA_TRIGGER", 11) == 0) {
-                    printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
-                    printf("[UDP] Web OTA Command Received! Triggering Download...\n");
-                    printf("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n");
-                    
-                    // 举起升级大旗！唤醒 UART 任务去干活！
-                    g_start_ymodem_transfer = true; 
+                    if (g_vcu_state == SYS_STATE_IDLE) {
+                        printf("[SYS] EXEC -> Starting OTA Worker...\n");
+                        // 分配 8192 字节的大栈空间，专门给 HTTP 和文件读写用
+                        xTaskCreate(ota_worker_task, "ota_worker", 10240, NULL, 6, NULL);
+                    } else {
+                        // 防御性编程：如果有人连按两下核按钮，直接拒绝，防止搞崩内存!
+                        printf("[SYS] WRN -> OTA task is already running (State: %d). Ignored.\n", g_vcu_state);
+                    }
                 }
             }
         }
@@ -258,36 +404,12 @@ static void uart_protocol_task(void *pvParameters)
     uint8_t rx_buf[256];
 
     while (1) {
-        int rx_len = uart_read_bytes(UART_NUM_0, rx_buf, sizeof(rx_buf), pdMS_TO_TICKS(10));
-        if (rx_len > 0) {
-            parse_uart_buffer(rx_buf, rx_len);
-        }
-
-        // 捕捉到 UDP 任务举起的旗帜！
-        if (g_start_ymodem_transfer == true) {
-            g_start_ymodem_transfer = false; 
-            
-            printf("[SYS] OTA Request received. Starting background download...\n");
-            
-            // 第一步：偷偷去 Python 服务器下固件
-            if (bsp_http_download_firmware() == true) {
-                
-                printf("[SYS] Download Success! Now triggering STM32 to reboot...\n");
-                
-                // 第二步：固件已经稳稳躺在 SPIFFS 里了，现在下发指令让 STM32 重启！
-                protocol_send_ota_trigger(); 
-                
-                // 第三步：留出 2 秒钟的时间等待 STM32 进入 Bootloader
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                
-                // 第四步：开始 YModem 传输！
-                protocol_ymodem_send_file("/spiffs/app.bin", "app.bin");
-                
-            } else {
-                printf("[SYS] Download Failed! Aborting OTA sequence.\n");
+        if (g_vcu_state == SYS_STATE_IDLE || g_vcu_state == SYS_STATE_VERIFYING) {
+            int rx_len = uart_read_bytes(UART_NUM_0, rx_buf, sizeof(rx_buf), pdMS_TO_TICKS(10));
+            if (rx_len > 0) {
+                parse_uart_buffer(rx_buf, rx_len);
             }
         }
-
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -295,8 +417,8 @@ static void uart_protocol_task(void *pvParameters)
 // 【入口】协议层服务启动函数 (在 main.c 中调用)
 void protocol_service_start(void)
 {
-    // 双核驱动：一边听着 STM32 的日常汇报，一边竖着耳朵听 Web 端的核按钮！
+    // 双核驱动：一边听着 STM32 的日常汇报，一边竖着耳朵听 Web 端的核按钮!
     xTaskCreate(uart_protocol_task, "protocol_task", 4096, NULL, 5, NULL);
     xTaskCreate(udp_listen_task, "udp_listen", 4096, NULL, 5, NULL);
-    printf("[PROTOCOL] Service Tasks Started in background.\n");
+    printf("[SYS] EXEC -> Service Tasks Started in background.\n");
 }
