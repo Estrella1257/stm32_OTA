@@ -39,6 +39,8 @@ int main(void)
     ringbuffer_init(&g_rx_ringbuffer, g_rx_pool, RX_POOL_SIZE);
     
     VCU_Config_Init();
+	
+    Protocol_Send_Alive_Ping();
 
     // 清理串口标志位并开启中断
     if (USART_GetFlagStatus(USART1, USART_FLAG_ORE) != RESET) USART_ReceiveData(USART1);

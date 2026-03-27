@@ -71,7 +71,7 @@ void Protocol_Poll(ringbuffer_t *rb)
                 if (checksum == frame_buf[total_frame_size - 1]) 
                 {
                     // 完美截获一个二进制指令包
-                    if (cmd == CMD_START_OTA && len == 2) {
+                    if (cmd == CMD_ENTER_BOOT && len == 2) {
                         if (frame_buf[4] == 0x00 && frame_buf[5] == 0xFF) {
                             printf("\r\n[SYS] OTA Trigger Command Received! Rebooting...\r\n");
                             PWR_BackupAccessCmd(ENABLE);
@@ -94,62 +94,6 @@ void Protocol_Poll(ringbuffer_t *rb)
     }
 }
 
-// void Parse_ESP32_Commands(ringbuffer_t *rb) 
-// {
-//     while (ringbuffer_get_length(rb) >= 4) 
-//     {
-//         uint8_t header1, header2;
-//         ringbuffer_peek_byte(rb, 0, &header1);
-//         ringbuffer_peek_byte(rb, 1, &header2);
-
-//         if (header1 == 0xAA && header2 == 0x55) 
-//         {
-//             uint8_t cmd, len;
-//             ringbuffer_peek_byte(rb, 2, &cmd);
-//             ringbuffer_peek_byte(rb, 3, &len);
-
-//             uint16_t total_frame_size = 4 + len + 1;
-
-//             if (ringbuffer_get_length(rb) < total_frame_size) {
-//                 break; 
-//             }
-
-//             uint8_t frame_buf[32]; 
-//             ringbuffer_read_block(rb, frame_buf, total_frame_size);
-
-//             uint8_t checksum = 0;
-//             for (int i = 0; i < total_frame_size - 1; i++) {
-//                 checksum += frame_buf[i];
-//             }
-
-//             if (checksum == frame_buf[total_frame_size - 1]) 
-//             {
-//                 // Valid Frame Received
-//                 if (cmd == CMD_START_OTA && len == 2) 
-//                 {
-//                     if (frame_buf[4] == 0x00 && frame_buf[5] == 0xFF) 
-//                     {
-//                         printf("\r\n[SYS] OTA Trigger Command Received! Rebooting...\r\n");
-                        
-//                         PWR_BackupAccessCmd(ENABLE);
-//                         RTC_WriteBackupRegister(RTC_BKP_DR1, 0xAAAA);
-//                         NVIC_SystemReset();
-//                     }
-//                 }
-//             } 
-//             else 
-//             {
-//                 printf("\r\n[WARN] Checksum error in received frame!\r\n");
-//             }
-//         } 
-//         else 
-//         {
-//             uint8_t junk;
-//             ringbuffer_read_byte(rb, &junk);
-//         }
-//     }
-// }
-
 void Protocol_Send_Telemetry(int16_t speed, uint8_t battery, uint8_t gear)
 {
     uint8_t tx_buffer[9];
@@ -157,7 +101,7 @@ void Protocol_Send_Telemetry(int16_t speed, uint8_t battery, uint8_t gear)
 
     tx_buffer[0] = 0xAA; // header1
     tx_buffer[1] = 0x55; // header2
-    tx_buffer[2] = 0x01; // cmd: CMD_REPORT_STATE
+    tx_buffer[2] = CMD_REPORT_STATE; // cmd: CMD_REPORT_STATE
     tx_buffer[3] = 0x04; // len: 速度(2) + 电量(1) + 档位(1) = 4 字节
 
     // 核心修改：将 int16_t 拆分为两个独立的字节 (小端序)
@@ -175,5 +119,32 @@ void Protocol_Send_Telemetry(int16_t speed, uint8_t battery, uint8_t gear)
     // 取低 8 位作为最终的校验位
     tx_buffer[8] = (uint8_t)(checksum & 0xFF);
 
+    usart2_send_data_dma(tx_buffer, 9);
+}
+
+// 向 ESP32 发送“存活证明” (打断 15 秒死亡倒计时)
+void Protocol_Send_Alive_Ping(void)
+{
+    uint8_t tx_buffer[9];
+    uint16_t checksum = 0;
+
+    // 填充标准帧
+    tx_buffer[0] = 0xAA;
+    tx_buffer[1] = 0x55;
+    tx_buffer[2] = CMD_STM32_ALIVE;
+    tx_buffer[3] = 4;    // 载荷长度：speed(2) + battery(1) + gear(1)
+    
+    tx_buffer[4] = 0;    // 刚开机，速度 0
+	  tx_buffer[5] = 0;
+    tx_buffer[6] = 100;  // 刚开机，电量 100
+    tx_buffer[7] = 1;    // 默认 1 档
+
+    // 计算校验和 (除了最后一个字节 checksum 以外的所有字节累加)
+    for (int i = 0; i < 8; i++) {
+        checksum += tx_buffer[i];
+    }
+    tx_buffer[8] = (uint8_t)(checksum & 0xFF);
+
+    // 发送
     usart2_send_data_dma(tx_buffer, 9);
 }

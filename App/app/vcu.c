@@ -33,20 +33,20 @@ void VCU_Task_50ms(void) {
 
 void VCU_Config_Init(void)
 {
-    printf("\r\n[SYS] App Booting at 0x08010000...\r\n");
-    printf("[NVS] Initializing NVS subsystem...\r\n");
+    printf("\r\n[SYS] BOOT -> App Booting at 0x08010000...\r\n");
+    printf("[NVS] INIT -> Initializing NVS subsystem...\r\n");
     
     int ret = nvs_init(&g_nvs_ctx, &stm32_nvs_port);
     if (ret != NVS_OK) {
-        printf("[NVS] ERROR: Init failed with code %d!\r\n", ret);
+        printf("[NVS] FATAL -> Init failed (Code: %d). System Halted.\r\n", ret); 
         while(1); // 初始化失败，死机保护
     }
 
     ret = nvs_load(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
     if (ret == NVS_OK) {
-        printf("[NVS] SUCCESS: Loaded existing configuration!\r\n");
+        printf("[NVS] OK -> Loaded existing configuration!\r\n");
     } else if (ret == NVS_ERR_NOT_FOUND) {
-        printf("[NVS] WARNING: No valid config found. Formatting Factory Defaults...\r\n");
+        printf("[NVS] WRN -> No valid config found. Formatting Factory Defaults...\r\n");
         
         memset(&g_sys_cfg, 0, sizeof(SystemConfig_t));
         g_sys_cfg.total_odometer_m = 0;       
@@ -54,5 +54,6 @@ void VCU_Config_Init(void)
         g_sys_cfg.speed_limit_kmh_x10 = 250;  
         
         nvs_save(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
+        printf("[NVS] OK -> Factory defaults stored.\r\n");
     }
 }
