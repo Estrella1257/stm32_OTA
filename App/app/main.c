@@ -4,11 +4,18 @@
 #include "protocol.h"
 #include "debug_shell.h"
 #include "vcu.h"
+#include "imu_task.h"
+#include "vofa.h"
+
+extern float g_vcu_pitch;
+extern float g_vcu_roll;
+extern int16_t global_sim_speed;
 
 // 外部全局变量
 volatile uint8_t g_rx_data = 0;
 volatile uint8_t g_rx_flag = 0;
 extern volatile uint8_t g_ui_update_flag;
+extern volatile uint8_t g_imu_update_flag;
 
 // 环形水池定义
 #define RX_POOL_SIZE 2048
@@ -28,10 +35,13 @@ int main(void)
 
     // 1. 底层初始化
     board_lowlevel_init();
+    DWT_Delay_Init();
     usart1_init();
     usart1_receive_register(usart1_received);
     usart2_init_dma();
+    usart3_init();
     tim3_init();
+    IMU_Task_Init();
     led_init(&led1);
     led_init(&led2);
 
@@ -66,7 +76,21 @@ int main(void)
             DebugShell_ProcessCommand((char)g_rx_data);
         }
 
-        // 任务 4：50ms VCU 业务心跳
+        // 任务 4：10ms IMU 姿态解算心跳
+        if (g_imu_update_flag) {
+            g_imu_update_flag = 0;
+            IMU_Task_10ms_Update(); 
+
+            // VOFA+ 专线直达：通过 USART3 扔给电脑，完全不影响 USART1 的打印
+            float vofa_buf[4];
+            vofa_buf[0] = g_vcu_pitch;    // CH0: 看看车头有没有翘起来        
+            vofa_buf[1] = g_vcu_roll;     // CH1: 看看车子有没有摔倒     
+            vofa_buf[2] = (float)global_sim_speed;     // CH2: 看看当前车速曲线
+            vofa_buf[3] = 0.0f;      // CH3: 留给以后的 PID 目标速度             
+            VOFA_JustFloat_Send_USART3(vofa_buf, 4); 
+        }
+
+        // 任务 5：50ms VCU 业务心跳
         if (g_ui_update_flag) {
             g_ui_update_flag = 0;
             
