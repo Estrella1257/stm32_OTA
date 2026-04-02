@@ -1,4 +1,5 @@
 #include "debug_shell.h"
+#include "vcu.h"
 
 SystemConfig_t g_sys_cfg;
 NvsContext_t g_nvs_ctx;
@@ -28,7 +29,10 @@ void DebugShell_ShowMenu(void) {
     printf("Send '2': Tune Kp (+0.1) & Save\r\n");
     printf("Send '3': Trigger GC Stress Test (Write 50 times)\r\n");
     printf("Send '4': Toggle ESP32 UI Simulator (ON/OFF)\r\n");
+    printf("Send 'F': Manual FAULT triggered\r\n");
+    printf("Send 'C': Clear Fault. Return to STANDBY\r\n");
     printf("Send 'R': Hard Reboot (Test Data Persistence)\r\n");
+    printf("Send 'B': Stop feeding the dog (Test Watch Dog)\r\n");
 }
 
 void DebugShell_ProcessCommand(char cmd) {
@@ -61,10 +65,24 @@ void DebugShell_ProcessCommand(char cmd) {
             global_sim_enable = !global_sim_enable;
             printf("[VCU] MODE -> Simulator %s\r\n", global_sim_enable ? "ENABLED" : "DISABLED");
             break;
+        case 'F':
+            printf("\r\n[SYS] WRN -> Manual FAULT triggered!\r\n");
+            g_vcu_state = VCU_STATE_FAULT;
+            break;
+        case 'C':
+            printf("\r\n[SYS] OK -> Fault Cleared. Returning to STANDBY.\r\n");
+            g_vcu_state = VCU_STATE_STANDBY;
+            break;
         case 'R':
         case 'r':
             printf("[SYS] CMD -> Manual System Reset requested.\r\n");
             NVIC_SystemReset(); 
+            break;
+        case 'B':
+            printf("\r\n[SYS] -> Stop feeding the dog...\r\n");
+            // 制造一个死循环，彻底卡死前台任务，看门狗将在 1 秒后咬死系统
+            while(1) {
+            }
             break;
         default:
             printf("[CMD] ERR -> Unknown instruction: '%c'\r\n", cmd);

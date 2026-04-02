@@ -6,6 +6,7 @@
 #include "vcu.h"
 #include "imu_task.h"
 #include "vofa.h"
+#include "iwdg.h"
 
 extern float g_vcu_pitch;
 extern float g_vcu_roll;
@@ -41,6 +42,7 @@ int main(void)
     usart2_init_dma();
     usart3_init();
     tim3_init();
+    IWDG_Init();
     IMU_Task_Init();
     led_init(&led1);
     led_init(&led2);
@@ -56,6 +58,18 @@ int main(void)
     if (USART_GetFlagStatus(USART1, USART_FLAG_ORE) != RESET) USART_ReceiveData(USART1);
     USART_ClearFlag(USART1, USART_FLAG_RXNE);
     __enable_irq();
+
+    if (RCC_GetFlagStatus(RCC_FLAG_IWDGRST) != RESET) 
+    {
+        printf("[SYS] FATAL -> System recovered from IWDG RESET!\r\n");
+        printf("[SYS] FATAL -> A severe crash occurred previously.\r\n");
+        
+        RCC_ClearFlag(); 
+    } 
+    else 
+    {
+        printf("\r\n[SYS] -> Normal Power-On Reset.\r\n");
+    }
 
     // 打印菜单
     DebugShell_ShowMenu();
@@ -87,7 +101,7 @@ int main(void)
             vofa_buf[1] = g_vcu_roll;     // CH1: 看看车子有没有摔倒     
             vofa_buf[2] = (float)global_sim_speed;     // CH2: 看看当前车速曲线
             vofa_buf[3] = 0.0f;      // CH3: 留给以后的 PID 目标速度             
-            VOFA_JustFloat_Send_USART3(vofa_buf, 4); 
+            VOFA_JustFloat_Send(vofa_buf, 4); 
         }
 
         // 任务 5：50ms VCU 业务心跳
@@ -95,6 +109,8 @@ int main(void)
             g_ui_update_flag = 0;
             
             VCU_Task_50ms(); // 你的速度、档位逻辑
+
+            IWDG_Feed();
             
             // LED 1Hz 心跳指示灯
             static uint8_t led_time_count = 0;

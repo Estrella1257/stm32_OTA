@@ -22,7 +22,7 @@ void IMU_Task_Init(void)
     // 检查设备在线状态
     uint8_t id = MPU6050_GetDeviceID();
     if (id == 0x68) {
-        printf("[SYS] MPU6050 Online! ID: 0x%02X\r\n", id);
+        printf("[SYS] -> MPU6050 Online! ID: 0x%02X\r\n", id);
     } else {
         printf("[SYS] ERR -> MPU6050 Offline! ID: 0x%02X\r\n", id);
     }
