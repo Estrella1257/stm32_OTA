@@ -1,5 +1,7 @@
 #include "vcu.h"
+#include "throttle.h"
 #include <math.h>
+#include "key.h"
 
 // 引入 IMU 解算出来的角度
 extern float g_vcu_pitch;
@@ -15,6 +17,13 @@ uint8_t global_sim_enable = 0;
 
 void VCU_Task_50ms(void) 
 {
+    static int battery_tick = 0;
+    battery_tick++;
+    if(battery_tick > 10) { 
+        global_sim_battery--;
+        if(global_sim_battery == 0) global_sim_battery = 100;
+        battery_tick = 0;
+    }
     // 0. 全局最高优先级：上帝视角的安全防御
     // 无论在什么状态下，只要车翻了，瞬间切断动力
     if (g_vcu_state != VCU_STATE_INIT && g_vcu_state != VCU_STATE_FAULT) 
@@ -52,27 +61,27 @@ void VCU_Task_50ms(void)
             break;
 
         case VCU_STATE_DRIVING:
-            // 正常行驶状态：这里执行你之前的模拟器速度变化逻辑
-            if (global_sim_enable) {
-                global_sim_speed++; 
-                if(global_sim_speed > 85) global_sim_speed = 0;
+            // 1. 读取真实油门开度 (0~100)
+            uint8_t throttle_percent = Get_Percent();
 
-                // 电量消耗模拟
-                static int battery_tick = 0;
-                battery_tick++;
-                if(battery_tick > 10) { 
-                    global_sim_battery--;
-                    if(global_sim_battery == 0) global_sim_battery = 100;
-                    battery_tick = 0;
-                }
+            // 2. 获取当前档位 (已消抖，绝对纯净)
+            DriveMode_t current_mode = Key_Get();
+            
+            // 3. 动态查表限速机制
+            uint8_t speed_limit = 60; // 默认 DRIVE 模式 60km/h
+            if (current_mode == MODE_ECO) {
+                speed_limit = 25;     // ECO 模式锁死 25km/h
+            } else if (current_mode == MODE_SPORT) {
+                speed_limit = 85;     // SPORT 模式解除封印
+            }
 
-                // 档位模拟
-                if (global_sim_speed == 0) global_sim_gear = 0; 
-                else if (global_sim_speed < 30) global_sim_gear = 1;
-                else if (global_sim_speed < 60) global_sim_gear = 2;
-                else global_sim_gear = 3; 
-            } else {
-                // 如果关闭了模拟器，退回驻车状态
+            // 4. 最终速度合成
+            global_sim_speed = (throttle_percent * speed_limit) / 100; 
+
+            // 5. 将实际物理档位同步给仪表盘显示
+            global_sim_gear = (uint8_t)current_mode + 1; // 变成 1,2,3 传给 ESP32
+
+            if (!global_sim_enable) {
                 printf("[VCU] INFO -> Engine Stopped. Returning to STANDBY.\r\n");
                 g_vcu_state = VCU_STATE_STANDBY;
             }

@@ -7,6 +7,8 @@
 #include "imu_task.h"
 #include "vofa.h"
 #include "iwdg.h"
+#include "throttle.h"
+#include "key.h"
 
 extern float g_vcu_pitch;
 extern float g_vcu_roll;
@@ -43,6 +45,8 @@ int main(void)
     usart3_init();
     tim3_init();
     IWDG_Init();
+    ADC_DMA_Init();
+    Key_Init();
     IMU_Task_Init();
     led_init(&led1);
     led_init(&led2);
@@ -94,6 +98,7 @@ int main(void)
         if (g_imu_update_flag) {
             g_imu_update_flag = 0;
             IMU_Task_10ms_Update(); 
+            Key_Scan_10ms();
 
             // VOFA+ 专线直达：通过 USART3 扔给电脑，完全不影响 USART1 的打印
             float vofa_buf[4];
