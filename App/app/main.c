@@ -9,10 +9,18 @@
 #include "iwdg.h"
 #include "throttle.h"
 #include "key.h"
+#include "foc.h"
+#include "encoder.h"
+#include "pid.h"
+#include "foc_task.h" 
+
+// 实例化 PI 控制器 (必须在这里分配内存，foc_task.c 里的 extern 才能找到它)
+PI_Controller_t motor_speed_pi;
 
 extern float g_vcu_pitch;
 extern float g_vcu_roll;
 extern int16_t global_sim_speed;
+extern volatile uint16_t g_debug_adc_raw;
 
 // 外部全局变量
 volatile uint8_t g_rx_data = 0;
@@ -32,6 +40,9 @@ static void usart1_received(uint8_t data)
     g_rx_flag = 1;
 }
 
+// 需要在某个头文件(比如 timer.h 或 foc_task.h)中声明这个函数，或者在这里直接 extern
+extern void TIM6_1ms_Init_And_Enable(void);
+
 int main(void)
 {
     System_Reset_State();
@@ -43,7 +54,7 @@ int main(void)
     usart1_receive_register(usart1_received);
     usart2_init_dma();
     usart3_init();
-    tim3_init();
+    tim3_init();  
     IWDG_Init();
     ADC_DMA_Init();
     Key_Init();
@@ -55,7 +66,7 @@ int main(void)
     ringbuffer_init(&g_rx_ringbuffer, g_rx_pool, RX_POOL_SIZE);
     
     VCU_Config_Init();
-	
+    
     Protocol_Send_Alive_Ping();
 
     // 清理串口标志位并开启中断
@@ -67,13 +78,28 @@ int main(void)
     {
         printf("[SYS] FATAL -> System recovered from IWDG RESET!\r\n");
         printf("[SYS] FATAL -> A severe crash occurred previously.\r\n");
-        
         RCC_ClearFlag(); 
     } 
     else 
     {
         printf("\r\n[SYS] -> Normal Power-On Reset.\r\n");
     }
+
+    // 1. 初始化电机硬件
+    Encoder_Init();
+    Motor_PWM_Init();
+    Motor_Enable();
+
+    // 2. 初始化 PI 控制器 (dt 设为 0.002s，与 TIM6 中的降频节拍对应)
+    //PI_Init(&motor_speed_pi, 0.01f, 0.042f, 10.0f); 
+    PI_Init(&motor_speed_pi, g_sys_cfg.pid_kp, g_sys_cfg.pid_ki, 10.0f);
+
+    // 3. 强行上电对极 (在此期间电机必须空载)
+    printf("\r\n[FOC] System Ready. Starting Alignment...\r\n");
+    FOC_Align_Sensor(); 
+    
+    // 4. 开启 TIM6 1ms 中断，让 FOC 后台接管电机
+    TIM6_1ms_Init_And_Enable();
 
     // 打印菜单
     DebugShell_ShowMenu();
@@ -100,12 +126,12 @@ int main(void)
             IMU_Task_10ms_Update(); 
             Key_Scan_10ms();
 
-            // VOFA+ 专线直达：通过 USART3 扔给电脑，完全不影响 USART1 的打印
+            // VOFA+ 专线直达
             float vofa_buf[4];
-            vofa_buf[0] = g_vcu_pitch;    // CH0: 看看车头有没有翘起来        
-            vofa_buf[1] = g_vcu_roll;     // CH1: 看看车子有没有摔倒     
-            vofa_buf[2] = (float)global_sim_speed;     // CH2: 看看当前车速曲线
-            vofa_buf[3] = 0.0f;      // CH3: 留给以后的 PID 目标速度             
+            vofa_buf[0] = g_vcu_pitch;    
+            vofa_buf[1] = g_vcu_roll;     
+            vofa_buf[2] = (float)global_sim_speed;     
+            vofa_buf[3] = (float)g_debug_adc_raw;             
             VOFA_JustFloat_Send(vofa_buf, 4); 
         }
 
@@ -113,7 +139,7 @@ int main(void)
         if (g_ui_update_flag) {
             g_ui_update_flag = 0;
             
-            VCU_Task_50ms(); // 你的速度、档位逻辑
+            VCU_Task_50ms(); 
 
             IWDG_Feed();
             

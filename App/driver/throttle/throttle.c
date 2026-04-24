@@ -2,6 +2,7 @@
 
 // 这个数组就是 DMA 的“卸货区”，CPU 随时可以来读，不用管 ADC
 volatile uint16_t g_adc_buffer[ADC_FILTER_SIZE]; 
+volatile uint16_t g_debug_adc_raw = 0;
 
 void ADC_DMA_Init(void)
 {
@@ -76,6 +77,8 @@ uint8_t Get_Percent(void)
     }
     avg_raw = sum / ADC_FILTER_SIZE; 
     // 如果是 16 次，这里可以直接写 sum >> 4; 运行极快！
+
+    g_debug_adc_raw = avg_raw;
 
     // 2. 软件死区防呆与映射归一化
     if (avg_raw <= ADC_DEADZONE_MIN) {

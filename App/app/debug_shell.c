@@ -1,8 +1,11 @@
 #include "debug_shell.h"
 #include "vcu.h"
+#include "pid.h"
 
 SystemConfig_t g_sys_cfg;
 NvsContext_t g_nvs_ctx;
+
+extern PI_Controller_t motor_speed_pi;
 
 void DebugShell_PrintStatus(void) {
     printf("\r\n================ NVS STATUS ================\r\n");
@@ -19,16 +22,19 @@ void DebugShell_PrintStatus(void) {
     printf("------------- VCU PAYLOAD --------------\r\n");
     printf("[VCU] Odometer      : %lu m\r\n", g_sys_cfg.total_odometer_m);
     printf("[VCU] PID Kp        : %.2f\r\n", g_sys_cfg.pid_kp);
+    printf("[VCU] PID Ki        : %.2f\r\n", g_sys_cfg.pid_ki);
     printf("[VCU] Speed Limit   : %.1f km/h\r\n", g_sys_cfg.speed_limit_kmh_x10 / 10.0f);
     printf("============================================\r\n\r\n");
 }
 
 void DebugShell_ShowMenu(void) {
     printf("\r\n>>> NVS Test Shell Ready <<<\r\n");
-    printf("Send '1': Add 100m to Odometer & Save\r\n");
-    printf("Send '2': Tune Kp (+0.1) & Save\r\n");
+    printf("Send '1': Tune Kp (+0.005) & Save\r\n"); 
+    printf("Send '2': Tune Ki (+0.005) & Save\r\n");
     printf("Send '3': Trigger GC Stress Test (Write 50 times)\r\n");
     printf("Send '4': Toggle ESP32 UI Simulator (ON/OFF)\r\n");
+    printf("Send '5': Tune Kp (-0.005) & Save\r\n"); 
+    printf("Send '6': Tune Ki (-0.005) & Save\r\n");
     printf("Send 'F': Manual FAULT triggered\r\n");
     printf("Send 'C': Clear Fault. Return to STANDBY\r\n");
     printf("Send 'R': Hard Reboot (Test Data Persistence)\r\n");
@@ -38,13 +44,16 @@ void DebugShell_ShowMenu(void) {
 void DebugShell_ProcessCommand(char cmd) {
     switch (cmd) {
         case '1':
-            g_sys_cfg.total_odometer_m += 100;
-            printf("[CMD] EVT -> Odometer +100m (New: %lu m). Saving...\r\n", g_sys_cfg.total_odometer_m);
+            g_sys_cfg.pid_kp += 0.005f; // 微调 Kp
+            motor_speed_pi.Kp = g_sys_cfg.pid_kp; // 热更新到 FOC 大脑
+            printf("[CMD] EVT -> Kp tuned to %.3f (Live). Saving...\r\n", motor_speed_pi.Kp);
             nvs_save(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
             break;
-        case '2':
-            g_sys_cfg.pid_kp += 0.1f;
-            printf("[CMD] EVT -> Kp tuned to %.2f. Saving...\r\n", g_sys_cfg.pid_kp);
+            
+        case '2': 
+            g_sys_cfg.pid_ki += 0.005f; // 微调 Ki
+            motor_speed_pi.Ki = g_sys_cfg.pid_ki; // 热更新到 FOC 大脑
+            printf("[CMD] EVT -> Ki tuned to %.3f (Live). Saving...\r\n", motor_speed_pi.Ki);
             nvs_save(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
             break;
         case '3': 
@@ -64,6 +73,19 @@ void DebugShell_ProcessCommand(char cmd) {
         case '4': 
             global_sim_enable = !global_sim_enable;
             printf("[VCU] MODE -> Simulator %s\r\n", global_sim_enable ? "ENABLED" : "DISABLED");
+            break;
+        case '5':
+            g_sys_cfg.pid_kp -= 0.005f; // 微调 Kp
+            motor_speed_pi.Kp = g_sys_cfg.pid_kp; // 热更新到 FOC 大脑
+            printf("[CMD] EVT -> Kp tuned to %.3f (Live). Saving...\r\n", motor_speed_pi.Kp);
+            nvs_save(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
+            break;
+            
+        case '6': 
+            g_sys_cfg.pid_ki -= 0.005f; // 微调 Ki
+            motor_speed_pi.Ki = g_sys_cfg.pid_ki; // 热更新到 FOC 大脑
+            printf("[CMD] EVT -> Ki tuned to %.3f (Live). Saving...\r\n", motor_speed_pi.Ki);
+            nvs_save(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
             break;
         case 'F':
             printf("\r\n[SYS] WRN -> Manual FAULT triggered!\r\n");

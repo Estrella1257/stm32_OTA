@@ -51,3 +51,49 @@ void TIM3_IRQHandler(void)
         TIM_ClearITPendingBit(TIM3, TIM_IT_Update);
     }
 }
+
+// 初始化 TIM6 为 1ms 绝对心跳
+void TIM6_1ms_Init_And_Enable(void)
+{
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
+    NVIC_InitTypeDef NVIC_InitStructure;
+
+    // 1. 配置定时器基础参数 (假设 APB1 Timer Clock = 84MHz)
+    // 预分频器设为 84-1，计数器时钟为 1MHz (即 1 微秒跳一次)
+    TIM_TimeBaseStructure.TIM_Prescaler = 84 - 1;       
+    // 计 1000 个微秒 = 1 毫秒
+    TIM_TimeBaseStructure.TIM_Period = 1000 - 1;        
+    TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;
+    TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+    TIM_TimeBaseInit(TIM6, &TIM_TimeBaseStructure);
+
+    // 2. 配置 NVIC 中断优先级 (极其关键！)
+    // 注意：STM32F4 中 TIM6 的中断向量名和 DAC 绑在一起
+    NVIC_InitStructure.NVIC_IRQChannel = TIM6_DAC_IRQn; 
+    
+    // 抢占优先级设为 0 (最高)，子优先级设为 0
+    // 绝不允许被 UART、I2C 或 你的 TIM3 打断
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0; 
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+
+    // 3. 清除标志位并使能中断与定时器
+    TIM_ClearITPendingBit(TIM6, TIM_IT_Update);
+    TIM_ITConfig(TIM6, TIM_IT_Update, ENABLE);
+    TIM_Cmd(TIM6, ENABLE);
+}
+
+// TIM6 硬件中断服务函数
+void TIM6_DAC_IRQHandler(void)
+{
+    // 检查是否是 TIM6 的更新中断
+    if (TIM_GetITStatus(TIM6, TIM_IT_Update) != RESET) {
+        
+        // 1. 呼叫你的 FOC 后台驻留任务 (1000Hz 极速执行)
+        FOC_Hardware_1ms_ISR(); 
+
+        // 2. 务必清除中断标志位
+        TIM_ClearITPendingBit(TIM6, TIM_IT_Update);
+    }
+}

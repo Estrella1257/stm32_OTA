@@ -2,6 +2,9 @@
 #include "throttle.h"
 #include <math.h>
 #include "key.h"
+#include "nvs_api.h"
+#include "motor.h"
+#include "pid.h"
 
 // 引入 IMU 解算出来的角度
 extern float g_vcu_pitch;
@@ -14,9 +17,41 @@ int16_t global_sim_speed = 0;
 uint8_t global_sim_battery = 100; 
 uint8_t global_sim_gear = 0;    
 uint8_t global_sim_enable = 0;
+double g_ram_odometer_m = 0.0;
+
+extern PI_Controller_t motor_speed_pi;
+extern float g_filtered_rpm;
 
 void VCU_Task_50ms(void) 
 {
+    // 任务 A：极致实时的 UI 视觉层 (完美数学积分法)
+    // 公式：转过的圈数 = (当前RPM / 60) * 0.05秒
+    // 行驶米数 = 圈数 * 1000米
+    float revs_in_50ms = (fabsf(g_filtered_rpm) / 60.0f) * 0.05f;
+    float current_delta_m = revs_in_50ms * 1000.0f;
+    
+    if (current_delta_m > 0.0f) {
+        g_ram_odometer_m += current_delta_m; 
+    }
+
+    // 任务 B：保护寿命的 NVS 异步落盘层 
+    static uint32_t last_saved_odo = 0xFFFFFFFF; 
+    if (last_saved_odo == 0xFFFFFFFF) last_saved_odo = g_sys_cfg.total_odometer_m; 
+
+    // 每行驶满 1000 米 (1公里)，才真正触发一次 Flash 写入
+    if ((g_ram_odometer_m - last_saved_odo) >= 1000.0) 
+    {
+        g_sys_cfg.total_odometer_m = (uint32_t)g_ram_odometer_m; 
+        last_saved_odo = g_sys_cfg.total_odometer_m;             
+        
+        // 因为现在它在真实世界里，每骑 1 分多钟才会触发一次。
+        // 这 20 毫秒的卡顿在正常的行车过程中是完全可以接受的。
+        nvs_save(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
+        
+        printf("\r\n[NVS] AUTO-SAVE -> Flash Updated. Odometer: %lu km\r\n", last_saved_odo / 1000);
+    }
+
+    // 任务 C：电池模拟逻辑
     static int battery_tick = 0;
     battery_tick++;
     if(battery_tick > 10) { 
@@ -24,21 +59,19 @@ void VCU_Task_50ms(void)
         if(global_sim_battery == 0) global_sim_battery = 100;
         battery_tick = 0;
     }
-    // 0. 全局最高优先级：上帝视角的安全防御
-    // 无论在什么状态下，只要车翻了，瞬间切断动力
+
+    // 任务 D：全局最高优先级：上帝视角的安全防御
     if (g_vcu_state != VCU_STATE_INIT && g_vcu_state != VCU_STATE_FAULT) 
     {
-        // 如果左右倾斜超过 45 度，判定为摔车
-        if (fabs(g_vcu_roll) > 45.0f) 
+        if (fabsf(g_vcu_roll) > 45.0f) 
         {
             printf("\r\n[VCU] FATAL -> Crash Detected! Roll: %.1f\r\n", g_vcu_roll);
             g_vcu_state = VCU_STATE_FAULT;
-            
-            // TODO: 未来在这里调用 SimpleFOC_Disable(); 瞬间断电
+            Motor_Disable();  // 瞬间断电
         }
     }
 
-    // 1. 核心状态机 (Switch-Case 架构)
+    // 任务 E：核心驱动状态机
     switch (g_vcu_state) 
     {
         case VCU_STATE_INIT:
@@ -116,14 +149,24 @@ void VCU_Config_Init(void)
 
     ret = nvs_load(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
     if (ret == NVS_OK) {
-        printf("[NVS] OK -> Loaded existing configuration!\r\n");
+        if (g_sys_cfg.pid_kp > 0.1f || g_sys_cfg.pid_kp < 0.0f) {
+            printf("\r\n[NVS] WRN -> Corrupted PID detected! Resetting...\r\n");
+            g_sys_cfg.pid_kp = 0.01f;
+            g_sys_cfg.pid_ki = 0.042f;
+            g_sys_cfg.speed_limit_kmh_x10 = 850; 
+            nvs_save(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg); 
+        }
+        g_ram_odometer_m = (double)g_sys_cfg.total_odometer_m;
+        printf("[NVS] OK -> Odo: %.1fm, Kp: %.3f, Ki: %.3f\r\n", 
+                g_ram_odometer_m, g_sys_cfg.pid_kp, g_sys_cfg.pid_ki);
     } else if (ret == NVS_ERR_NOT_FOUND) {
         printf("[NVS] WRN -> No valid config found. Formatting Factory Defaults...\r\n");
         
         memset(&g_sys_cfg, 0, sizeof(SystemConfig_t));
         g_sys_cfg.total_odometer_m = 0;       
-        g_sys_cfg.pid_kp = 1.5f;              
-        g_sys_cfg.speed_limit_kmh_x10 = 250;  
+        g_sys_cfg.pid_kp = 0.01f;  
+        g_sys_cfg.pid_ki = 0.042f;            
+        g_sys_cfg.speed_limit_kmh_x10 = 850;  
         
         nvs_save(&g_nvs_ctx, &stm32_nvs_port, &g_sys_cfg);
         printf("[NVS] OK -> Factory defaults stored.\r\n");
